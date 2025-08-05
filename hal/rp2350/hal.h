@@ -52,15 +52,25 @@ void hal_init(void);
 # define hal_disable_irq() irq_set_enabled(ALARM_IRQ, false)
 # define hal_idle_cpu()    goto_sleep_for_1ms()
 #else // MRBC_NO_TIMER
-# define hal_init()        ((void)0)
+// # define hal_init()        ((void)0)
+void hal_init(void);
 # define hal_enable_irq()  ((void)0)
 # define hal_disable_irq() ((void)0)
 # define hal_idle_cpu()    (sleep_ms(1), mrbc_tick())
 
 #endif
 
+# define vm_mutex_init(lock_num)      (spin_lock_init(lock_num))
+# define vm_mutex_lock(mutex)         (spin_lock_blocking(mutex))
+# define vm_mutex_unlock(mutex, save) (spin_unlock(mutex, save))
+
 /***** Typedefs *************************************************************/
 /***** Global variables *****************************************************/
+
+extern spin_lock_t * alloc_mutex;
+extern spin_lock_t * write_mutex;
+extern spin_lock_t * gc_mutex;
+
 /***** Function prototypes **************************************************/
 #ifdef __cplusplus
 extern "C" {
