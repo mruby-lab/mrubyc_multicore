@@ -18,6 +18,7 @@
 /***** System headers *******************************************************/
 #include "pico/stdlib.h"
 #include "pico/time.h"
+#include "pico/multicore.h"
 #include "pico/aon_timer.h"
 #include "hardware/irq.h"
 #include "hardware/clocks.h"
