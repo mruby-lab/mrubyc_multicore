@@ -60,12 +60,8 @@ void hal_init(void){
   add_repeating_timer_ms(1, alarm_irq, NULL, &timer);
   powman_timer_start();
   
-  clocks_hw->sleep_en0 = CLOCKS_SLEEP_EN0_CLK_REF_POWMAN_BITS
-                        | CLOCKS_SLEEP_EN0_CLK_SYS_DMA_BITS
-                        | CLOCKS_SLEEP_EN0_CLK_SYS_BUSFABRIC_BITS;               
+  clocks_hw->sleep_en0 = CLOCKS_SLEEP_EN0_CLK_REF_POWMAN_BITS;
   clocks_hw->sleep_en1 = CLOCKS_SLEEP_EN1_CLK_SYS_TIMER0_BITS
-                        | CLOCKS_SLEEP_EN1_CLK_SYS_XOSC_BITS
-                        | CLOCKS_SLEEP_EN1_CLK_SYS_TIMER1_BITS
                         | CLOCKS_SLEEP_EN1_CLK_SYS_USBCTRL_BITS
                         | CLOCKS_SLEEP_EN1_CLK_USB_BITS
                         | CLOCKS_SLEEP_EN1_CLK_SYS_UART0_BITS
@@ -81,6 +77,23 @@ void hal_init(void){
 */
 int hal_flush(int fd) {
   return 0;
+}
+
+void goto_sleep_for_1ms()
+{
+  struct timespec ts;
+  aon_timer_get_time(&ts);
+  
+  if (ts.tv_nsec + 1e6 >= 1e9) {
+    ts.tv_sec += 1;
+    ts.tv_nsec = 0;
+  } else {
+    ts.tv_nsec += 1e6;
+  }
+
+  aon_timer_enable_alarm(&ts, alarm_irq_at_sleep, true);
+
+  __wfi();
 }
 
 #endif /* ifndef MRBC_NO_TIMER */
@@ -130,21 +143,4 @@ void hal_abort(const char *s)
   }
 
   abort();
-}
-
-void goto_sleep_for_1ms()
-{
-  struct timespec ts;
-  aon_timer_get_time(&ts);
-  
-  if (ts.tv_nsec + 1e6 >= 1e9) {
-    ts.tv_sec += 1;
-    ts.tv_nsec = 0;
-  } else {
-    ts.tv_nsec += 1e6;
-  }
-
-  aon_timer_enable_alarm(&ts, alarm_irq_at_sleep, true);
-
-  __wfi();
 }
