@@ -130,7 +130,7 @@ int hal_write(int fd, const void *buf, int nbytes)
 {
   int i = nbytes;
   const uint8_t *p = buf;
-  interrupt_status save;
+  interrupt_status_t save;
 
   save = vm_mutex_lock(write_mutex);
 
