@@ -65,6 +65,8 @@ void hal_init(void);
 # define vm_mutex_unlock(mutex, save) (spin_unlock(mutex, save))
 
 /***** Typedefs *************************************************************/
+typedef uint32_t interrupt_status;
+
 /***** Global variables *****************************************************/
 
 extern spin_lock_t * alloc_mutex;

@@ -130,11 +130,16 @@ int hal_write(int fd, const void *buf, int nbytes)
 {
   int i = nbytes;
   const uint8_t *p = buf;
+  interrupt_status save;
+
+  save = vm_mutex_lock(write_mutex);
 
   while( --i >= 0 ) {
     putchar( *p++ );
     // uart_putc_raw(uart0, *p++ );
   }
+
+  vm_mutex_unlock(write_mutex, save);
 
   return nbytes;
 }
