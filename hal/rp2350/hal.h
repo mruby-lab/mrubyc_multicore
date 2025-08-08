@@ -20,6 +20,7 @@
 #include "pico/time.h"
 #include "pico/multicore.h"
 #include "pico/aon_timer.h"
+#include "pico/sync.h"
 #include "hardware/irq.h"
 #include "hardware/clocks.h"
 #include "hardware/sync.h"
@@ -61,7 +62,7 @@ void hal_init(void);
 # define vm_mutex_init(lock_num)      (spin_lock_init(lock_num))
 # define vm_mutex_lock(mutex)         (spin_lock_blocking(mutex))
 # define vm_mutex_unlock(mutex, save) (spin_unlock(mutex, save))
-
+# define get_procid() (lock_get_caller_owner_id())
 
 /***** Typedefs *************************************************************/
 typedef uint32_t interrupt_status_t;
