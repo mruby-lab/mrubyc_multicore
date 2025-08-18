@@ -76,6 +76,12 @@ void hal_init(void){
   gc_mutex = vm_mutex_init(spin_lock_claim_unused(true)); 
 }
 
+void hal_init_core1(void)
+{
+  alarm_pool_t * pool = alarm_pool_create_with_unused_hardware_alarm(1);
+  alarm_pool_add_repeating_timer_ms(pool, 1, alarm_irq, NULL, &timer);
+}
+
 //================================================================
 /*!@brief
   Flush write buffer

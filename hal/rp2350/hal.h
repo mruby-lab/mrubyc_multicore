@@ -47,11 +47,13 @@
 
 #ifndef MRBC_NO_TIMER
 void hal_init(void);
+void hal_init_core1(void);
 # define hal_enable_irq()  irq_set_enabled(ALARM_IRQ, true)
 # define hal_disable_irq() irq_set_enabled(ALARM_IRQ, false)
 # define hal_idle_cpu()    goto_sleep_for_1ms()
 #else // MRBC_NO_TIMER
 void hal_init(void);
+#define hal_init_core1() ((void)0)
 # define hal_enable_irq()  ((void)0)
 # define hal_disable_irq() ((void)0)
 # define hal_idle_cpu()    (sleep_ms(1), mrbc_tick())
