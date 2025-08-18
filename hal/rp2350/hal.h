@@ -20,6 +20,7 @@
 #include "pico/time.h"
 #include "pico/multicore.h"
 #include "pico/aon_timer.h"
+#include "pico/sync.h"
 #include "hardware/irq.h"
 #include "hardware/clocks.h"
 #include "hardware/sync.h"
@@ -46,11 +47,13 @@
 
 #ifndef MRBC_NO_TIMER
 void hal_init(void);
+void hal_init_core1(void);
 # define hal_enable_irq()  irq_set_enabled(ALARM_IRQ, true)
 # define hal_disable_irq() irq_set_enabled(ALARM_IRQ, false)
 # define hal_idle_cpu()    goto_sleep_for_1ms()
 #else // MRBC_NO_TIMER
 void hal_init(void);
+#define hal_init_core1() ((void)0)
 # define hal_enable_irq()  ((void)0)
 # define hal_disable_irq() ((void)0)
 # define hal_idle_cpu()    (sleep_ms(1), mrbc_tick())
@@ -61,7 +64,7 @@ void hal_init(void);
 # define vm_mutex_init(lock_num)      (spin_lock_init(lock_num))
 # define vm_mutex_lock(mutex)         (spin_lock_blocking(mutex))
 # define vm_mutex_unlock(mutex, save) (spin_unlock(mutex, save))
-
+# define get_procid() (lock_get_caller_owner_id())
 
 /***** Typedefs *************************************************************/
 typedef uint32_t interrupt_status_t;

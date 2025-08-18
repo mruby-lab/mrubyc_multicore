@@ -41,7 +41,8 @@ spin_lock_t * gc_mutex;
   timer alarm irq
 
 */
-bool alarm_irq(struct repeating_timer *t) {
+bool alarm_irq(struct repeating_timer *t) 
+{  
   mrbc_tick();
   return true;
 }
@@ -70,6 +71,15 @@ void hal_init(void){
                         | CLOCKS_SLEEP_EN1_CLK_SYS_UART0_BITS
                         | CLOCKS_SLEEP_EN1_CLK_PERI_UART0_BITS;
   
+  alloc_mutex = vm_mutex_init(spin_lock_claim_unused(true));
+  write_mutex = vm_mutex_init(spin_lock_claim_unused(true));
+  gc_mutex = vm_mutex_init(spin_lock_claim_unused(true)); 
+}
+
+void hal_init_core1(void)
+{
+  alarm_pool_t * pool = alarm_pool_create_with_unused_hardware_alarm(1);
+  alarm_pool_add_repeating_timer_ms(pool, 1, alarm_irq, NULL, &timer);
 }
 
 //================================================================
