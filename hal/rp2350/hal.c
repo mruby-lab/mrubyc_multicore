@@ -25,7 +25,10 @@
 /***** Typedefs *************************************************************/
 /***** Function prototypes **************************************************/
 /***** Local variables ******************************************************/
-struct repeating_timer timer;
+struct repeating_timer timer0;
+struct repeating_timer timer1;
+
+static uint8_t is_busy[2] = {true, true};
 
 /***** Global variables *****************************************************/
 spin_lock_t * alloc_mutex;
@@ -43,13 +46,22 @@ spin_lock_t * gc_mutex;
 */
 bool alarm_irq(struct repeating_timer *t) 
 {  
-  mrbc_tick();
+  if (is_busy[get_procid()]) {
+    mrbc_tick();
+  }
+  
   return true;
 }
 
+
+
 void alarm_irq_at_sleep(void)
 {
-  mrbc_tick();
+  uint8_t procid = get_procid();
+  if (is_busy[procid] == false) {
+    mrbc_tick();
+  }
+  is_busy[procid] = true;
 }
 
 //================================================================
@@ -57,16 +69,16 @@ void alarm_irq_at_sleep(void)
   initialize
 
 */
-void hal_init(void){
+void hal_init(void)
+{  
   
   powman_timer_set_1khz_tick_source_lposc();
   
-  add_repeating_timer_ms(1, alarm_irq, NULL, &timer);
+  add_repeating_timer_ms(1, alarm_irq, NULL, &timer0);
   powman_timer_start();
   
   clocks_hw->sleep_en0 = CLOCKS_SLEEP_EN0_CLK_REF_POWMAN_BITS;
-  clocks_hw->sleep_en1 = CLOCKS_SLEEP_EN1_CLK_SYS_TIMER0_BITS
-                        | CLOCKS_SLEEP_EN1_CLK_SYS_USBCTRL_BITS
+  clocks_hw->sleep_en1 = CLOCKS_SLEEP_EN1_CLK_SYS_USBCTRL_BITS
                         | CLOCKS_SLEEP_EN1_CLK_USB_BITS
                         | CLOCKS_SLEEP_EN1_CLK_SYS_UART0_BITS
                         | CLOCKS_SLEEP_EN1_CLK_PERI_UART0_BITS;
@@ -78,8 +90,8 @@ void hal_init(void){
 
 void hal_init_core1(void)
 {
-  alarm_pool_t * pool = alarm_pool_create_with_unused_hardware_alarm(1);
-  alarm_pool_add_repeating_timer_ms(pool, 1, alarm_irq, NULL, &timer);
+  alarm_pool_t * pool = alarm_pool_create_with_unused_hardware_alarm(true);
+  alarm_pool_add_repeating_timer_ms(pool, 1, alarm_irq, NULL, &timer1);
 }
 
 //================================================================
@@ -95,13 +107,14 @@ int hal_flush(int fd) {
 void goto_sleep_for_1ms()
 {
   struct timespec ts;
+  uint8_t procid = get_procid();
+  is_busy[procid] = false;
   aon_timer_get_time(&ts);
   
-  if (ts.tv_nsec + 1e6 >= 1e9) {
+  ts.tv_nsec += 1e6;
+  if (ts.tv_nsec >= 1e9) {
     ts.tv_sec += 1;
-    ts.tv_nsec = 0;
-  } else {
-    ts.tv_nsec += 1e6;
+    ts.tv_nsec -= 1e9;
   }
 
   aon_timer_enable_alarm(&ts, alarm_irq_at_sleep, true);
