@@ -60,8 +60,8 @@ void hal_init(void);
 
 #endif
 
-
-# define vm_mutex_init(lock_num)      (spin_lock_init(lock_num))
+// get exclusive used spinlocks. If failed, get shared spinlocks.
+# define vm_mutex_init(lock_num)      (lock_num > 0 ? spin_lock_init(lock_num) : spin_lock_init(next_striped_spin_lock_num()))
 # define vm_mutex_lock(mutex)         (spin_lock_blocking(mutex))
 # define vm_mutex_unlock(mutex, save) (spin_unlock(mutex, save))
 # define get_procid() (lock_get_caller_owner_id())
@@ -70,10 +70,12 @@ void hal_init(void);
 typedef uint32_t interrupt_status_t;
 
 /***** Global variables *****************************************************/
-
+// At RP2350, max number of spinlocks (exclusive use) is 8 (24-31).
 extern spin_lock_t * alloc_mutex;
 extern spin_lock_t * write_mutex;
 extern spin_lock_t * gc_mutex;
+
+// At RP2350, max number of spinlocks (shared) is 8 (16-23).
 
 /***** Function prototypes **************************************************/
 #ifdef __cplusplus

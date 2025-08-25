@@ -83,9 +83,9 @@ void hal_init(void)
                         | CLOCKS_SLEEP_EN1_CLK_SYS_UART0_BITS
                         | CLOCKS_SLEEP_EN1_CLK_PERI_UART0_BITS;
   
-  alloc_mutex = vm_mutex_init(spin_lock_claim_unused(true));
-  write_mutex = vm_mutex_init(spin_lock_claim_unused(true));
-  gc_mutex = vm_mutex_init(spin_lock_claim_unused(true)); 
+  alloc_mutex = vm_mutex_init(spin_lock_claim_unused(false));
+  write_mutex = vm_mutex_init(spin_lock_claim_unused(false));
+  gc_mutex = vm_mutex_init(spin_lock_claim_unused(false));
 }
 
 void hal_init_core1(void)
