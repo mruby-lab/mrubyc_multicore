@@ -34,6 +34,7 @@ static uint8_t is_busy[2] = {true, true};
 spin_lock_t * alloc_mutex;
 spin_lock_t * write_mutex;
 spin_lock_t * gc_mutex;
+spin_lock_t * globalvar_mutex;
 /***** Signal catching functions ********************************************/
 /***** Local functions ******************************************************/
 /***** Global functions *****************************************************/
@@ -86,6 +87,7 @@ void hal_init(void)
   alloc_mutex = vm_mutex_init(spin_lock_claim_unused(false));
   write_mutex = vm_mutex_init(spin_lock_claim_unused(false));
   gc_mutex = vm_mutex_init(spin_lock_claim_unused(false));
+  globalvar_mutex = vm_mutex_init(spin_lock_claim_unused(false));
 }
 
 void hal_init_core1(void)

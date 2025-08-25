@@ -148,7 +148,10 @@ void mrbc_get_all_class_const( const struct RClass *cls, mrbc_value *ret )
 */
 int mrbc_set_global( mrbc_sym sym_id, mrbc_value *v )
 {
-  return mrbc_kv_set( &handle_global, sym_id, v );
+  interrupt_status_t save = vm_mutex_lock( globalvar_mutex );
+  int error_code = mrbc_kv_set( &handle_global, sym_id, v );
+  vm_mutex_unlock( globalvar_mutex, save );
+  return error_code;
 }
 
 
