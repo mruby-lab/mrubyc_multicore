@@ -38,8 +38,12 @@ static mrbc_kv_handle handle_global;	//!< for global variables.
 */
 void mrbc_init_global(void)
 {
+  interrupt_status_t save = vm_mutex_lock( globalvar_mutex );
+  
   mrbc_kv_init_handle( 0, &handle_const, 30 );
   mrbc_kv_init_handle( 0, &handle_global, 0 );
+  
+  vm_mutex_unlock( globalvar_mutex, save );
 }
 
 
@@ -52,11 +56,17 @@ void mrbc_init_global(void)
 */
 int mrbc_set_const( mrbc_sym sym_id, mrbc_value *v )
 {
+  interrupt_status_t save = vm_mutex_lock( globalvar_mutex );
+  
   if( mrbc_kv_get( &handle_const, sym_id ) != NULL ) {
     mrbc_printf("warning: already initialized constant.\n");
   }
 
-  return mrbc_kv_set( &handle_const, sym_id, v );
+  int error_code = mrbc_kv_set( &handle_const, sym_id, v );
+  
+  vm_mutex_unlock( globalvar_mutex, save );
+
+  return error_code;
 }
 
 
@@ -149,8 +159,11 @@ void mrbc_get_all_class_const( const struct RClass *cls, mrbc_value *ret )
 int mrbc_set_global( mrbc_sym sym_id, mrbc_value *v )
 {
   interrupt_status_t save = vm_mutex_lock( globalvar_mutex );
+  
   int error_code = mrbc_kv_set( &handle_global, sym_id, v );
+  
   vm_mutex_unlock( globalvar_mutex, save );
+  
   return error_code;
 }
 

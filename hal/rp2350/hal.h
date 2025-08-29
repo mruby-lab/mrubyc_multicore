@@ -75,6 +75,7 @@ extern spin_lock_t * alloc_mutex;
 extern spin_lock_t * write_mutex;
 extern spin_lock_t * gc_mutex;
 extern spin_lock_t * globalvar_mutex;
+extern spin_lock_t * symbol_mutex;
 
 // At RP2350, max number of spinlocks (shared) is 8 (16-23).
 
