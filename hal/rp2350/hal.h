@@ -25,6 +25,9 @@
 #include "hardware/clocks.h"
 #include "hardware/sync.h"
 #include "hardware/powman.h"
+#include <stdatomic.h>
+#include <assert.h>
+#include "hardware/gpio.h"
 
 /***** Constant values ******************************************************/
 #define ALARM_IRQ 0
@@ -37,6 +40,19 @@
 #define MRBC_TICK_UNIT_10_MS 10
 // You may be able to reduce power consumption if you configure
 // MRBC_TICK_UNIT_2_MS or larger.
+
+#define ALLOC_MUTEX    0
+#define WRITE_MUTEX    1
+#define GC_MUTEX       2
+#define GLOBALKV_MUTEX 3
+#define SYMBOL_MUTEX   4
+#define MUTEX_REQUIRE_NUM 5
+
+#define CANARY_VAL 0x5AA55AA5
+
+#define OUT_PIN 15
+
+
 #define MRBC_TICK_UNIT MRBC_TICK_UNIT_1_MS
 // Substantial timeslice value (millisecond) will be
 // MRBC_TICK_UNIT * MRBC_TIMESLICE_TICK_COUNT (+ Jitter).
@@ -48,8 +64,8 @@
 #ifndef MRBC_NO_TIMER
 void hal_init(void);
 void hal_init_core1(void);
-# define hal_enable_irq()  irq_set_enabled(ALARM_IRQ, true)
-# define hal_disable_irq() irq_set_enabled(ALARM_IRQ, false)
+# define hal_enable_irq()  (irq_set_enabled(ALARM_IRQ, true)/*, irq_set_enabled(4, true), irq_set_enabled(45, true)*/)
+# define hal_disable_irq() (irq_set_enabled(ALARM_IRQ, false)/*, irq_set_enabled(4, false), irq_set_enabled(45, false)*/)
 # define hal_idle_cpu()    goto_sleep_for_1ms()
 #else // MRBC_NO_TIMER
 void hal_init(void);
@@ -60,16 +76,31 @@ void hal_init(void);
 
 #endif
 
+/*
 // get exclusive used spinlocks. If failed, get shared spinlocks.
 # define vm_mutex_init(lock_num)      (lock_num > 0 ? spin_lock_init(lock_num) : spin_lock_init(next_striped_spin_lock_num()))
 # define vm_mutex_lock(mutex)         (spin_lock_blocking(mutex))
 # define vm_mutex_unlock(mutex, save) (spin_unlock(mutex, save))
+
+*/
 # define get_procid() (lock_get_caller_owner_id())
 
 /***** Typedefs *************************************************************/
 typedef uint32_t interrupt_status_t;
+typedef struct {
+  spin_lock_t * vm_mutex;
+  uint32_t is_available[MUTEX_REQUIRE_NUM];
+  int owner[MUTEX_REQUIRE_NUM];
+  uint32_t change_seq[MUTEX_REQUIRE_NUM];
+} Monitor;
+
 
 /***** Global variables *****************************************************/
+extern uint32_t monitor_pre_canary[1];
+extern Monitor mrbc_monitor;
+extern uint32_t mrbc_monitor_post_canary[1];
+
+/*
 // At RP2350, max number of spinlocks (exclusive use) is 8 (24-31).
 extern spin_lock_t * alloc_mutex;
 extern spin_lock_t * write_mutex;
@@ -78,6 +109,7 @@ extern spin_lock_t * globalvar_mutex;
 extern spin_lock_t * symbol_mutex;
 
 // At RP2350, max number of spinlocks (shared) is 8 (16-23).
+*/
 
 /***** Function prototypes **************************************************/
 #ifdef __cplusplus
@@ -89,8 +121,20 @@ int hal_flush(int fd);
 void hal_abort(const char *s);
 void alarm_init();
 void goto_sleep_for_1ms();
+void check_canary();
+void vm_mutex_lock(int resource);
+void vm_mutex_unlock(int resource);
+// inline void vm_mutex_lock(int resource);
+// inline void vm_mutex_unlock(int resource);
 
-// static uint64_t alarm_time = 0;
+/***** Inline functions *****************************************************/
+
+
+
+
+
+
+
 
 /***** Local headers ********************************************************/
 #include "rrt0.h"

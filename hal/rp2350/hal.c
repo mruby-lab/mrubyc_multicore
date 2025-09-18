@@ -28,17 +28,16 @@
 struct repeating_timer timer0;
 struct repeating_timer timer1;
 
-static uint8_t is_busy[2] = {true, true};
+static uint32_t is_busy[2] = {true, true};
 
 /***** Global variables *****************************************************/
-spin_lock_t * alloc_mutex;
-spin_lock_t * write_mutex;
-spin_lock_t * gc_mutex;
-spin_lock_t * globalvar_mutex;
-spin_lock_t * symbol_mutex;
+uint32_t monitor_pre_canary[1];
+Monitor mrbc_monitor;
+uint32_t mrbc_monitor_post_canary[1];
 
 /***** Signal catching functions ********************************************/
 /***** Local functions ******************************************************/
+
 /***** Global functions *****************************************************/
 #ifndef MRBC_NO_TIMER
 
@@ -47,21 +46,21 @@ spin_lock_t * symbol_mutex;
   timer alarm irq
 
 */
-bool alarm_irq(struct repeating_timer *t) 
-{  
-  if (is_busy[get_procid()]) {
+bool alarm_irq(struct repeating_timer *t)
+{
+  if (is_busy[get_procid()])
+  {
     mrbc_tick();
   }
-  
+
   return true;
 }
-
-
 
 void alarm_irq_at_sleep(void)
 {
   uint8_t procid = get_procid();
-  if (is_busy[procid] == false) {
+  if (is_busy[procid] == false)
+  {
     mrbc_tick();
   }
   is_busy[procid] = true;
@@ -73,29 +72,39 @@ void alarm_irq_at_sleep(void)
 
 */
 void hal_init(void)
-{  
+{
   
   powman_timer_set_1khz_tick_source_lposc();
-  
+
   add_repeating_timer_ms(1, alarm_irq, NULL, &timer0);
   powman_timer_start();
-  
+
   clocks_hw->sleep_en0 = CLOCKS_SLEEP_EN0_CLK_REF_POWMAN_BITS;
-  clocks_hw->sleep_en1 = CLOCKS_SLEEP_EN1_CLK_SYS_USBCTRL_BITS
-                        | CLOCKS_SLEEP_EN1_CLK_USB_BITS
-                        | CLOCKS_SLEEP_EN1_CLK_SYS_UART0_BITS
+  clocks_hw->sleep_en1 = CLOCKS_SLEEP_EN1_CLK_SYS_USBCTRL_BITS 
+                        | CLOCKS_SLEEP_EN1_CLK_USB_BITS 
+                        | CLOCKS_SLEEP_EN1_CLK_SYS_UART0_BITS 
                         | CLOCKS_SLEEP_EN1_CLK_PERI_UART0_BITS;
+
+  // If this can't get a spinlock, this causes panic.
+  mrbc_monitor.vm_mutex = spin_lock_init(spin_lock_claim_unused(true));
+  for (int i = 0; i < MUTEX_REQUIRE_NUM; i++) {
+    mrbc_monitor.is_available[i] = true;
+    mrbc_monitor.owner[i] = -1;
+    mrbc_monitor.change_seq[i] = 0u;
+  }
   
-  alloc_mutex = vm_mutex_init(spin_lock_claim_unused(false));
-  write_mutex = vm_mutex_init(spin_lock_claim_unused(false));
-  gc_mutex = vm_mutex_init(spin_lock_claim_unused(false));
-  globalvar_mutex = vm_mutex_init(spin_lock_claim_unused(false));
-  symbol_mutex = vm_mutex_init(spin_lock_claim_unused(false));
+  gpio_init(OUT_PIN);
+  gpio_set_dir(OUT_PIN, GPIO_OUT);
+  gpio_put(OUT_PIN, 0);
+  
+  monitor_pre_canary[0] = CANARY_VAL;
+
+  mrbc_monitor_post_canary[0] = CANARY_VAL;
 }
 
 void hal_init_core1(void)
 {
-  alarm_pool_t * pool = alarm_pool_create_with_unused_hardware_alarm(true);
+  alarm_pool_t *pool = alarm_pool_create_with_unused_hardware_alarm(true);
   alarm_pool_add_repeating_timer_ms(pool, 1, alarm_irq, NULL, &timer1);
 }
 
@@ -105,7 +114,8 @@ void hal_init_core1(void)
 
   @param  fd    dummy, but 1.
 */
-int hal_flush(int fd) {
+int hal_flush(int fd)
+{
   return 0;
 }
 
@@ -115,9 +125,10 @@ void goto_sleep_for_1ms()
   uint8_t procid = get_procid();
   is_busy[procid] = false;
   aon_timer_get_time(&ts);
-  
+
   ts.tv_nsec += 1e6;
-  if (ts.tv_nsec >= 1e9) {
+  if (ts.tv_nsec >= 1e9)
+  {
     ts.tv_sec += 1;
     ts.tv_nsec -= 1e9;
   }
@@ -128,14 +139,13 @@ void goto_sleep_for_1ms()
 }
 
 #else
-void hal_init(void){
-  alloc_mutex = vm_mutex_init(spin_lock_claim_unused(true));
-  write_mutex = vm_mutex_init(spin_lock_claim_unused(true));
-  gc_mutex = vm_mutex_init(spin_lock_claim_unused(true)); 
+void hal_init(void)
+{
+  // If this can't get a spinlock, this causes panic.
+  mrbc_monitor.vm_mutex = spin_lock_init(spin_lock_claim_unused(true));
 }
 
 #endif /* ifndef MRBC_NO_TIMER */
-
 
 //================================================================
 /*!@brief
@@ -158,20 +168,21 @@ int hal_write(int fd, const void *buf, int nbytes)
 {
   int i = nbytes;
   const uint8_t *p = buf;
-  interrupt_status_t save;
+  
+  
+  vm_mutex_lock( WRITE_MUTEX );
 
-  save = vm_mutex_lock(write_mutex);
-
-  while( --i >= 0 ) {
-    putchar( *p++ );
+  // putchar(mrbc_monitor.is_available[WRITE_MUTEX] + 'a');
+  while (--i >= 0)
+  {
+    putchar(*p++);
     // uart_putc_raw(uart0, *p++ );
   }
-
-  vm_mutex_unlock(write_mutex, save);
-
+  
+  vm_mutex_unlock( WRITE_MUTEX );
+  
   return nbytes;
 }
-
 
 //================================================================
 /*!@brief
@@ -181,9 +192,65 @@ int hal_write(int fd, const void *buf, int nbytes)
 */
 void hal_abort(const char *s)
 {
-  if( s ) {
+  if (s)
+  {
     hal_write(1, s, strlen(s));
   }
 
   abort();
 }
+
+void check_canary(void) {
+  if (monitor_pre_canary[0] != CANARY_VAL || mrbc_monitor_post_canary[0] != CANARY_VAL) {  
+    // CANARY 崩壊：メモリ破壊の疑い
+    gpio_put(OUT_PIN, 1);
+    // ここで安全に止める／リセットするかログを残す
+    assert(monitor_pre_canary[0] == CANARY_VAL);
+    assert(mrbc_monitor_post_canary[0] == CANARY_VAL);
+  }
+}
+
+
+
+void vm_mutex_lock(const int resource)
+{
+  interrupt_status_t save;
+  while (true) {
+    save = spin_lock_blocking(mrbc_monitor.vm_mutex);
+    if (mrbc_monitor.is_available[resource]) {
+      mrbc_monitor.is_available[resource] = 0;
+      spin_unlock(mrbc_monitor.vm_mutex, save);
+      break;
+    }
+    spin_unlock(mrbc_monitor.vm_mutex, save);
+    tight_loop_contents();
+  }
+}
+
+void vm_mutex_unlock(const int resource)
+{
+  interrupt_status_t save;
+  
+  save = spin_lock_blocking(mrbc_monitor.vm_mutex);
+  mrbc_monitor.is_available[resource] = 1;
+  spin_unlock(mrbc_monitor.vm_mutex, save);
+}
+
+/***** TAS命令を使用した実装
+void vm_mutex_lock(const int resource)
+{
+  interrupt_status_t save;
+  while (true) {
+    int expected = 1;
+    if (atomic_compare_exchange_strong(&(mrbc_monitor.is_available[resource]), &expected, 0)) {
+      break;
+    }
+    tight_loop_contents();
+  }
+}
+
+void vm_mutex_unlock(const int resource)
+{
+  atomic_store_explicit(&(mrbc_monitor.is_available[resource]), 1, memory_order_release);
+}
+*/
