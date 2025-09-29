@@ -62,7 +62,7 @@ static volatile uint32_t wakeup_tick_[NUM_CORES] = {(1 << 16), (1 << 16)}; // no
 */
 static void q_insert_task(mrbc_tcb *p_tcb)
 {
-  uint8_t procid = get_procid();
+  int8_t procid = get_procid();
   // select target queue pointer.
   //                    state value = 0  1  2  3  4  5  6  7  8
   //                             /2   0, 0, 1, 1, 2, 2, 3, 3, 4
@@ -97,7 +97,7 @@ static void q_insert_task(mrbc_tcb *p_tcb)
 */
 static void q_delete_task(mrbc_tcb *p_tcb)
 {
-  uint8_t procid = get_procid();
+  int8_t procid = get_procid();
   // select target queue pointer. (same as q_insert_task)
   static const uint8_t conv_tbl[] = { 0,    1,    2,    0,    3 };
   mrbc_tcb **pp_q = &task_queue_[ conv_tbl[ p_tcb->state / 2 ]][procid];
@@ -144,7 +144,7 @@ EMSCRIPTEN_KEEPALIVE
 #endif
 void mrbc_tick(void)
 {
-  uint8_t procid = get_procid();
+  int8_t procid = get_procid();
   
   tick_[procid]++;
   
@@ -304,7 +304,7 @@ void mrbc_set_task_name(mrbc_tcb *tcb, const char *name)
 */
 mrbc_tcb * mrbc_find_task(const char *name)
 {
-  uint8_t procid = get_procid();
+  int8_t procid = get_procid();
   mrbc_tcb *tcb = 0;
   hal_disable_irq();
 
@@ -353,7 +353,7 @@ int mrbc_start_task(mrbc_tcb *tcb)
 int mrbc_run(void)
 {
   int ret = 0;
-  uint8_t procid = get_procid();
+  int8_t procid = get_procid();
 
   (void)ret;	// avoid warning.
 #if MRBC_SCHEDULER_EXIT
@@ -451,7 +451,7 @@ EMSCRIPTEN_KEEPALIVE
 int
 mrbc_run_step(void)
 {
-  uint8_t procid = get_procid();
+  int8_t procid = get_procid();
   // Take the task that can be executed
   mrbc_tcb *tcb = q_ready_[procid];
   if (tcb == NULL) {
@@ -518,7 +518,7 @@ mrbc_run_step(void)
 */
 void mrbc_sleep_ms(mrbc_tcb *tcb, uint32_t ms)
 {
-  uint8_t procid = get_procid();
+  int8_t procid = get_procid();
   
   hal_disable_irq();
   q_delete_task(tcb);
@@ -544,7 +544,7 @@ void mrbc_sleep_ms(mrbc_tcb *tcb, uint32_t ms)
 */
 void mrbc_wakeup_task(mrbc_tcb *tcb)
 {
-  uint8_t procid = get_procid();
+  int8_t procid = get_procid();
   switch( tcb->state ) {
   case TASKSTATE_SUSPENDED:
     mrbc_resume_task( tcb );    // for sleep without arguments.
@@ -633,7 +633,7 @@ void mrbc_suspend_task(mrbc_tcb *tcb)
 */
 void mrbc_resume_task(mrbc_tcb *tcb)
 {
-  uint8_t procid = get_procid();
+  int8_t procid = get_procid();
 
   if( tcb->state != TASKSTATE_SUSPENDED ) return;
 
@@ -776,7 +776,7 @@ int mrbc_mutex_lock( mrbc_mutex *mutex, mrbc_tcb *tcb )
 */
 int mrbc_mutex_unlock( mrbc_mutex *mutex, mrbc_tcb *tcb )
 {
-  uint8_t procid = get_procid();
+  int8_t procid = get_procid();
   MRBC_MUTEX_TRACE("mutex unlock / MUTEX: %p TCB: %p\n",  mutex, tcb );
 
   // check some parameters.
@@ -861,13 +861,13 @@ int mrbc_mutex_trylock( mrbc_mutex *mutex, mrbc_tcb *tcb )
 */
 void mrbc_cleanup(void)
 {
-  uint8_t procid = get_procid();
+  int8_t procid = get_procid();
   mrbc_cleanup_alloc();
   mrbc_cleanup_vm();
   mrbc_cleanup_symbol();
 
   for (int i = 0; i < NUM_TASK_QUEUE; i++) {
-   memset( task_queue_[i][procid], 0, sizeof(task_queue_[i][procid]) ); 
+    task_queue_[i][procid] = NULL; 
   }
 }
 
@@ -971,7 +971,7 @@ static void c_task_get(mrbc_vm *vm, mrbc_value v[], int argc)
 */
 static void c_task_list(mrbc_vm *vm, mrbc_value v[], int argc)
 {
-  uint8_t procid = get_procid();
+  int8_t procid = get_procid();
   mrbc_value ret = mrbc_array_new(vm, 1);
 
   hal_disable_irq();
@@ -997,7 +997,7 @@ static void c_task_list(mrbc_vm *vm, mrbc_value v[], int argc)
 */
 static void c_task_name_list(mrbc_vm *vm, mrbc_value v[], int argc)
 {
-  uint8_t procid = get_procid();
+  int8_t procid = get_procid();
   mrbc_value ret = mrbc_array_new(vm, 1);
 
   hal_disable_irq();
@@ -1597,7 +1597,7 @@ void pq(const mrbc_tcb *p_tcb)
 
 void pqall(void)
 {
-  uint8_t procid = get_procid();
+  int8_t procid = get_procid();
   hal_disable_irq();
   mrbc_printf("<< tick_ = %d, wakeup_tick_ = %d >>\n", tick_[procid], wakeup_tick_[procid]);
   mrbc_printf("<<<<< DORMANT >>>>>\n");   pq(q_dormant_[procid]);

@@ -563,6 +563,7 @@ void * mrbc_raw_alloc(unsigned int size)
     target = target->next_free;
   }
 
+  vm_mutex_unlock( ALLOC_MUTEX );
   // else out of memory
 #if defined(MRBC_OUT_OF_MEMORY)
   MRBC_OUT_OF_MEMORY();
@@ -570,7 +571,6 @@ void * mrbc_raw_alloc(unsigned int size)
   static const char msg[] = "Fatal error: Out of memory.\n";
   hal_write(2, msg, sizeof(msg)-1);
 #endif
-  vm_mutex_unlock( ALLOC_MUTEX );
   
   return NULL;  // ENOMEM
 
@@ -719,18 +719,18 @@ void mrbc_raw_free(void *ptr)
 #if defined(MRBC_DEBUG)
   {
     if( ptr == NULL ) {
+      vm_mutex_unlock( ALLOC_MUTEX );
       static const char msg[] = "mrbc_raw_free(): NULL pointer was given.\n";
       hal_write(2, msg, sizeof(msg)-1);
-      vm_mutex_unlock( ALLOC_MUTEX );
       return;
     }
 
     FREE_BLOCK *target = BLOCK_ADRS(ptr);
     if( target < (FREE_BLOCK *)BPOOL_TOP(pool) ||
 	target > (FREE_BLOCK *)BPOOL_END(pool) ) {
+      vm_mutex_unlock( ALLOC_MUTEX );
       static const char msg[] = "mrbc_raw_free(): Outside memory pool address was specified.\n";
       hal_write(2, msg, sizeof(msg)-1);
-      vm_mutex_unlock( ALLOC_MUTEX );
       return;
     }
 
@@ -744,31 +744,31 @@ void mrbc_raw_free(void *ptr)
     if( block == target ) {
       // found target block.
       if( IS_FREE_BLOCK(block) ) {  // is Free block?
+        vm_mutex_unlock( ALLOC_MUTEX );
         static const char msg[] = "mrbc_raw_free(): double free detected.\n";
         hal_write(2, msg, sizeof(msg)-1);
-        vm_mutex_unlock( ALLOC_MUTEX );
         return;
       }
 
       if( PHYS_NEXT(block) >= BPOOL_END(pool) ) {  // Is this a sentinel?
+        vm_mutex_unlock( ALLOC_MUTEX );
         static const char msg[] = "mrbc_raw_free(): no_free address was specified.\n";
         hal_write(2, msg, sizeof(msg)-1);
-        vm_mutex_unlock( ALLOC_MUTEX );
         return;
       }
 
     } else {
       // not found target block.
       if( block < target ) {
+        vm_mutex_unlock( ALLOC_MUTEX );
         static const char msg[] = "mrbc_raw_free(): no_free address was specified.\n";
         hal_write(2, msg, sizeof(msg)-1);
-        vm_mutex_unlock( ALLOC_MUTEX );
         return;
       }
-
+      
+      vm_mutex_unlock( ALLOC_MUTEX );
       static const char msg[] = "mrbc_raw_free(): Illegal address.\n";
       hal_write(2, msg, sizeof(msg)-1);
-      vm_mutex_unlock( ALLOC_MUTEX );
       return;
     }
 

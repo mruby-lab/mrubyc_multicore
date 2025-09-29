@@ -28,7 +28,7 @@
 struct repeating_timer timer0;
 struct repeating_timer timer1;
 
-static uint32_t is_busy[2] = {true, true};
+static uint8_t is_busy[2] = {true, true};
 
 /***** Global variables *****************************************************/
 uint32_t monitor_pre_canary[1];
@@ -58,7 +58,7 @@ bool alarm_irq(struct repeating_timer *t)
 
 void alarm_irq_at_sleep(void)
 {
-  uint8_t procid = get_procid();
+  int8_t procid = get_procid();
   if (is_busy[procid] == false)
   {
     mrbc_tick();
@@ -80,7 +80,8 @@ void hal_init(void)
   powman_timer_start();
 
   clocks_hw->sleep_en0 = CLOCKS_SLEEP_EN0_CLK_REF_POWMAN_BITS;
-  clocks_hw->sleep_en1 = CLOCKS_SLEEP_EN1_CLK_SYS_USBCTRL_BITS 
+  clocks_hw->sleep_en1 = CLOCKS_SLEEP_EN1_CLK_SYS_USBCTRL_BITS
+                        | CLOCKS_SLEEP_EN1_CLK_SYS_TIMER0_BITS 
                         | CLOCKS_SLEEP_EN1_CLK_USB_BITS 
                         | CLOCKS_SLEEP_EN1_CLK_SYS_UART0_BITS 
                         | CLOCKS_SLEEP_EN1_CLK_PERI_UART0_BITS;
@@ -122,7 +123,7 @@ int hal_flush(int fd)
 void goto_sleep_for_1ms()
 {
   struct timespec ts;
-  uint8_t procid = get_procid();
+  int8_t procid = get_procid();
   is_busy[procid] = false;
   aon_timer_get_time(&ts);
 
@@ -143,6 +144,20 @@ void hal_init(void)
 {
   // If this can't get a spinlock, this causes panic.
   mrbc_monitor.vm_mutex = spin_lock_init(spin_lock_claim_unused(true));
+  mrbc_monitor.vm_mutex = spin_lock_init(spin_lock_claim_unused(true));
+  for (int i = 0; i < MUTEX_REQUIRE_NUM; i++) {
+    mrbc_monitor.is_available[i] = true;
+    mrbc_monitor.owner[i] = -1;
+    mrbc_monitor.change_seq[i] = 0u;
+  }
+  
+  gpio_init(OUT_PIN);
+  gpio_set_dir(OUT_PIN, GPIO_OUT);
+  gpio_put(OUT_PIN, 0);
+  
+  monitor_pre_canary[0] = CANARY_VAL;
+
+  mrbc_monitor_post_canary[0] = CANARY_VAL;
 }
 
 #endif /* ifndef MRBC_NO_TIMER */
@@ -166,6 +181,7 @@ void hal_init(void)
 */
 int hal_write(int fd, const void *buf, int nbytes)
 {
+  
   int i = nbytes;
   const uint8_t *p = buf;
   
@@ -219,6 +235,8 @@ void vm_mutex_lock(const int resource)
     save = spin_lock_blocking(mrbc_monitor.vm_mutex);
     if (mrbc_monitor.is_available[resource]) {
       mrbc_monitor.is_available[resource] = 0;
+      mrbc_monitor.change_seq[resource]++;
+      mrbc_monitor.owner[resource] = get_procid();
       spin_unlock(mrbc_monitor.vm_mutex, save);
       break;
     }
@@ -229,28 +247,11 @@ void vm_mutex_lock(const int resource)
 
 void vm_mutex_unlock(const int resource)
 {
+  
   interrupt_status_t save;
   
   save = spin_lock_blocking(mrbc_monitor.vm_mutex);
   mrbc_monitor.is_available[resource] = 1;
+  mrbc_monitor.owner[resource] = -1;
   spin_unlock(mrbc_monitor.vm_mutex, save);
 }
-
-/***** TAS命令を使用した実装
-void vm_mutex_lock(const int resource)
-{
-  interrupt_status_t save;
-  while (true) {
-    int expected = 1;
-    if (atomic_compare_exchange_strong(&(mrbc_monitor.is_available[resource]), &expected, 0)) {
-      break;
-    }
-    tight_loop_contents();
-  }
-}
-
-void vm_mutex_unlock(const int resource)
-{
-  atomic_store_explicit(&(mrbc_monitor.is_available[resource]), 1, memory_order_release);
-}
-*/
