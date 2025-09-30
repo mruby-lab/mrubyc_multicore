@@ -30,7 +30,7 @@
 #include "hardware/gpio.h"
 
 /***** Constant values ******************************************************/
-#define ALARM_IRQ 0
+#define ALARM_IRQ TIMER0_IRQ_0
 
 /***** Macros ***************************************************************/
 #if !defined(MRBC_TICK_UNIT)
@@ -64,15 +64,15 @@
 #ifndef MRBC_NO_TIMER
 void hal_init(void);
 void hal_init_core1(void);
-# define hal_enable_irq()  (irq_set_enabled(ALARM_IRQ, true)/*, irq_set_enabled(4, true), irq_set_enabled(45, true)*/)
-# define hal_disable_irq() (irq_set_enabled(ALARM_IRQ, false)/*, irq_set_enabled(4, false), irq_set_enabled(45, false)*/)
+# define hal_enable_irq(save)  (restore_interrupts(save))
+# define hal_disable_irq() (save_and_disable_interrupts())
 # define hal_idle_cpu()    goto_sleep_for_1ms()
 #else // MRBC_NO_TIMER
 void hal_init(void);
 #define hal_init_core1() ((void)0)
 # define hal_enable_irq()  ((void)0)
 # define hal_disable_irq() ((void)0)
-# define hal_idle_cpu()    (sleep_ms(1), mrbc_tick())
+# define hal_idle_cpu()    (sleep_ms(1), (get_procid() == 0) ? mrbc_tick_increment() : ((void) 0), mrbc_task_switch())
 
 #endif
 
@@ -99,6 +99,7 @@ typedef struct {
 extern uint32_t monitor_pre_canary[1];
 extern Monitor mrbc_monitor;
 extern uint32_t mrbc_monitor_post_canary[1];
+extern uint32_t doorbell_irq;
 
 /*
 // At RP2350, max number of spinlocks (exclusive use) is 8 (24-31).

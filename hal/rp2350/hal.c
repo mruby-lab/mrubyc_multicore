@@ -28,12 +28,15 @@
 struct repeating_timer timer0;
 struct repeating_timer timer1;
 
-static uint8_t is_busy[2] = {true, true};
+static int doorbell_counter;
+
+static uint8_t is_core0_busy = true;
 
 /***** Global variables *****************************************************/
 uint32_t monitor_pre_canary[1];
 Monitor mrbc_monitor;
 uint32_t mrbc_monitor_post_canary[1];
+uint32_t doorbell_irq;
 
 /***** Signal catching functions ********************************************/
 /***** Local functions ******************************************************/
@@ -48,22 +51,34 @@ uint32_t mrbc_monitor_post_canary[1];
 */
 bool alarm_irq(struct repeating_timer *t)
 {
-  if (is_busy[get_procid()])
-  {
-    mrbc_tick();
+  // hal_write(1, "a", sizeof("a"));
+  if (is_core0_busy) {
+    mrbc_tick_increment();
+    multicore_doorbell_set_other_core(doorbell_counter);
+    mrbc_task_switch();
   }
 
   return true;
 }
 
+void alarm_irq_core1(void)
+{
+  // hal_write(1, "1", sizeof("1"));
+  if (multicore_doorbell_is_set_current_core(doorbell_counter)) {
+    mrbc_task_switch();
+    multicore_doorbell_clear_current_core(doorbell_counter);
+  }
+}
+
 void alarm_irq_at_sleep(void)
 {
-  int8_t procid = get_procid();
-  if (is_busy[procid] == false)
-  {
-    mrbc_tick();
+  // hal_write(1, "s", sizeof("s"));
+  if (is_core0_busy == false) {
+    mrbc_tick_increment();
+    multicore_doorbell_set_other_core(doorbell_counter);
+    mrbc_task_switch();
+    is_core0_busy = true;
   }
-  is_busy[procid] = true;
 }
 
 //================================================================
@@ -101,12 +116,21 @@ void hal_init(void)
   monitor_pre_canary[0] = CANARY_VAL;
 
   mrbc_monitor_post_canary[0] = CANARY_VAL;
+
+  doorbell_counter = multicore_doorbell_claim_unused((1 << NUM_CORES) - 1, false);
+  if (doorbell_counter == -1) {
+    char msg[] = "doorbell claim is failed!";
+    hal_write(1, msg, sizeof(msg));
+    exit(1);
+  }
+  
 }
 
 void hal_init_core1(void)
 {
-  alarm_pool_t *pool = alarm_pool_create_with_unused_hardware_alarm(true);
-  alarm_pool_add_repeating_timer_ms(pool, 1, alarm_irq, NULL, &timer1);
+  doorbell_irq = multicore_doorbell_irq_num(doorbell_counter);
+  irq_set_exclusive_handler(doorbell_irq, alarm_irq_core1);
+  irq_set_enabled(doorbell_irq, true);
 }
 
 //================================================================
@@ -124,17 +148,20 @@ void goto_sleep_for_1ms()
 {
   struct timespec ts;
   int8_t procid = get_procid();
-  is_busy[procid] = false;
-  aon_timer_get_time(&ts);
+  if (procid == 0) {
+    is_core0_busy = false;
+    aon_timer_get_time(&ts);
 
-  ts.tv_nsec += 1e6;
-  if (ts.tv_nsec >= 1e9)
-  {
-    ts.tv_sec += 1;
-    ts.tv_nsec -= 1e9;
+    ts.tv_nsec += 1e6;
+    if (ts.tv_nsec >= 1e9)
+    {
+      ts.tv_sec += 1;
+      ts.tv_nsec -= 1e9;
+    }
+
+    aon_timer_enable_alarm(&ts, alarm_irq_at_sleep, true);
   }
-
-  aon_timer_enable_alarm(&ts, alarm_irq_at_sleep, true);
+  
 
   __wfi();
 }
