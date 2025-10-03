@@ -27,7 +27,6 @@
 #include "hardware/powman.h"
 #include <stdatomic.h>
 #include <assert.h>
-#include "hardware/gpio.h"
 
 /***** Constant values ******************************************************/
 #define ALARM_IRQ TIMER0_IRQ_0
@@ -48,11 +47,6 @@
 #define SYMBOL_MUTEX   4
 #define MUTEX_REQUIRE_NUM 5
 
-#define CANARY_VAL 0x5AA55AA5
-
-#define OUT_PIN 15
-
-
 #define MRBC_TICK_UNIT MRBC_TICK_UNIT_1_MS
 // Substantial timeslice value (millisecond) will be
 // MRBC_TICK_UNIT * MRBC_TIMESLICE_TICK_COUNT (+ Jitter).
@@ -70,47 +64,25 @@ void hal_init_core1(void);
 #else // MRBC_NO_TIMER
 void hal_init(void);
 #define hal_init_core1() ((void)0)
-# define hal_enable_irq()  ((void)0)
-# define hal_disable_irq() ((void)0)
+# define hal_enable_irq(save)  ((void)0)
+# define hal_disable_irq() (0)
 # define hal_idle_cpu()    (sleep_ms(1), (get_procid() == 0) ? mrbc_tick_increment() : ((void) 0), mrbc_task_switch())
 
 #endif
 
-/*
-// get exclusive used spinlocks. If failed, get shared spinlocks.
-# define vm_mutex_init(lock_num)      (lock_num > 0 ? spin_lock_init(lock_num) : spin_lock_init(next_striped_spin_lock_num()))
-# define vm_mutex_lock(mutex)         (spin_lock_blocking(mutex))
-# define vm_mutex_unlock(mutex, save) (spin_unlock(mutex, save))
-
-*/
-# define get_procid() (lock_get_caller_owner_id())
+# define get_procid() (get_core_num())
 
 /***** Typedefs *************************************************************/
 typedef uint32_t interrupt_status_t;
 typedef struct {
   spin_lock_t * vm_mutex;
-  uint32_t is_available[MUTEX_REQUIRE_NUM];
-  int owner[MUTEX_REQUIRE_NUM];
-  uint32_t change_seq[MUTEX_REQUIRE_NUM];
+  volatile uint32_t is_available[MUTEX_REQUIRE_NUM];
 } Monitor;
 
 
 /***** Global variables *****************************************************/
-extern uint32_t monitor_pre_canary[1];
 extern Monitor mrbc_monitor;
-extern uint32_t mrbc_monitor_post_canary[1];
 extern uint32_t doorbell_irq;
-
-/*
-// At RP2350, max number of spinlocks (exclusive use) is 8 (24-31).
-extern spin_lock_t * alloc_mutex;
-extern spin_lock_t * write_mutex;
-extern spin_lock_t * gc_mutex;
-extern spin_lock_t * globalvar_mutex;
-extern spin_lock_t * symbol_mutex;
-
-// At RP2350, max number of spinlocks (shared) is 8 (16-23).
-*/
 
 /***** Function prototypes **************************************************/
 #ifdef __cplusplus
@@ -122,20 +94,41 @@ int hal_flush(int fd);
 void hal_abort(const char *s);
 void alarm_init();
 void goto_sleep_for_1ms();
-void check_canary();
-void vm_mutex_lock(int resource);
-void vm_mutex_unlock(int resource);
-// inline void vm_mutex_lock(int resource);
-// inline void vm_mutex_unlock(int resource);
 
 /***** Inline functions *****************************************************/
+//================================================================
+/*!@brief
+  Mutex lock for processing the VM itself
 
+*/
+static inline void vm_mutex_lock(const int resource)
+{
+  interrupt_status_t save;
+  while (true) {
+    save = spin_lock_blocking(mrbc_monitor.vm_mutex);
+    if (mrbc_monitor.is_available[resource]) {
+      mrbc_monitor.is_available[resource] = 0;
+      spin_unlock(mrbc_monitor.vm_mutex, save);
+      break;
+    }
+    spin_unlock(mrbc_monitor.vm_mutex, save);
+    tight_loop_contents();
+  }
+}
 
+//================================================================
+/*!@brief
+  Mutex unlock for processing the VM itself
 
-
-
-
-
+*/
+static inline void vm_mutex_unlock(const int resource)
+{
+  interrupt_status_t save;
+  
+  save = spin_lock_blocking(mrbc_monitor.vm_mutex);
+  mrbc_monitor.is_available[resource] = 1;
+  spin_unlock(mrbc_monitor.vm_mutex, save);
+}
 
 /***** Local headers ********************************************************/
 #include "rrt0.h"

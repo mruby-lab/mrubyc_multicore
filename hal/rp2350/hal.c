@@ -46,12 +46,11 @@ uint32_t doorbell_irq;
 
 //================================================================
 /*!@brief
-  timer alarm irq
+  timer alarm irq (for busy, at core0)
 
 */
 bool alarm_irq(struct repeating_timer *t)
 {
-  // hal_write(1, "a", sizeof("a"));
   if (is_core0_busy) {
     mrbc_tick_increment();
     multicore_doorbell_set_other_core(doorbell_counter);
@@ -61,18 +60,13 @@ bool alarm_irq(struct repeating_timer *t)
   return true;
 }
 
-void alarm_irq_core1(void)
-{
-  // hal_write(1, "1", sizeof("1"));
-  if (multicore_doorbell_is_set_current_core(doorbell_counter)) {
-    mrbc_task_switch();
-    multicore_doorbell_clear_current_core(doorbell_counter);
-  }
-}
+//================================================================
+/*!@brief
+  timer alarm irq (for sleep, at core0)
 
+*/
 void alarm_irq_at_sleep(void)
 {
-  // hal_write(1, "s", sizeof("s"));
   if (is_core0_busy == false) {
     mrbc_tick_increment();
     multicore_doorbell_set_other_core(doorbell_counter);
@@ -83,12 +77,22 @@ void alarm_irq_at_sleep(void)
 
 //================================================================
 /*!@brief
+  timer alarm irq (for both busy and sleep, at core1)
+
+*/
+void alarm_irq_core1(void)
+{
+  multicore_doorbell_clear_current_core(doorbell_counter);
+  mrbc_task_switch();
+}
+
+//================================================================
+/*!@brief
   initialize
 
 */
 void hal_init(void)
 {
-  
   powman_timer_set_1khz_tick_source_lposc();
 
   add_repeating_timer_ms(1, alarm_irq, NULL, &timer0);
@@ -105,18 +109,8 @@ void hal_init(void)
   mrbc_monitor.vm_mutex = spin_lock_init(spin_lock_claim_unused(true));
   for (int i = 0; i < MUTEX_REQUIRE_NUM; i++) {
     mrbc_monitor.is_available[i] = true;
-    mrbc_monitor.owner[i] = -1;
-    mrbc_monitor.change_seq[i] = 0u;
   }
   
-  gpio_init(OUT_PIN);
-  gpio_set_dir(OUT_PIN, GPIO_OUT);
-  gpio_put(OUT_PIN, 0);
-  
-  monitor_pre_canary[0] = CANARY_VAL;
-
-  mrbc_monitor_post_canary[0] = CANARY_VAL;
-
   doorbell_counter = multicore_doorbell_claim_unused((1 << NUM_CORES) - 1, false);
   if (doorbell_counter == -1) {
     char msg[] = "doorbell claim is failed!";
@@ -144,11 +138,14 @@ int hal_flush(int fd)
   return 0;
 }
 
+//================================================================
+/*!@brief
+  Go to sleep mode with alarm after 1ms.
+*/
 void goto_sleep_for_1ms()
 {
   struct timespec ts;
-  int8_t procid = get_procid();
-  if (procid == 0) {
+  if (get_procid() == 0) {
     is_core0_busy = false;
     aon_timer_get_time(&ts);
 
@@ -171,20 +168,9 @@ void hal_init(void)
 {
   // If this can't get a spinlock, this causes panic.
   mrbc_monitor.vm_mutex = spin_lock_init(spin_lock_claim_unused(true));
-  mrbc_monitor.vm_mutex = spin_lock_init(spin_lock_claim_unused(true));
   for (int i = 0; i < MUTEX_REQUIRE_NUM; i++) {
     mrbc_monitor.is_available[i] = true;
-    mrbc_monitor.owner[i] = -1;
-    mrbc_monitor.change_seq[i] = 0u;
   }
-  
-  gpio_init(OUT_PIN);
-  gpio_set_dir(OUT_PIN, GPIO_OUT);
-  gpio_put(OUT_PIN, 0);
-  
-  monitor_pre_canary[0] = CANARY_VAL;
-
-  mrbc_monitor_post_canary[0] = CANARY_VAL;
 }
 
 #endif /* ifndef MRBC_NO_TIMER */
@@ -208,14 +194,11 @@ void hal_init(void)
 */
 int hal_write(int fd, const void *buf, int nbytes)
 {
-  
   int i = nbytes;
   const uint8_t *p = buf;
   
-  
   vm_mutex_lock( WRITE_MUTEX );
 
-  // putchar(mrbc_monitor.is_available[WRITE_MUTEX] + 'a');
   while (--i >= 0)
   {
     putchar(*p++);
@@ -241,44 +224,4 @@ void hal_abort(const char *s)
   }
 
   abort();
-}
-
-void check_canary(void) {
-  if (monitor_pre_canary[0] != CANARY_VAL || mrbc_monitor_post_canary[0] != CANARY_VAL) {  
-    // CANARY 崩壊：メモリ破壊の疑い
-    gpio_put(OUT_PIN, 1);
-    // ここで安全に止める／リセットするかログを残す
-    assert(monitor_pre_canary[0] == CANARY_VAL);
-    assert(mrbc_monitor_post_canary[0] == CANARY_VAL);
-  }
-}
-
-
-
-void vm_mutex_lock(const int resource)
-{
-  interrupt_status_t save;
-  while (true) {
-    save = spin_lock_blocking(mrbc_monitor.vm_mutex);
-    if (mrbc_monitor.is_available[resource]) {
-      mrbc_monitor.is_available[resource] = 0;
-      mrbc_monitor.change_seq[resource]++;
-      mrbc_monitor.owner[resource] = get_procid();
-      spin_unlock(mrbc_monitor.vm_mutex, save);
-      break;
-    }
-    spin_unlock(mrbc_monitor.vm_mutex, save);
-    tight_loop_contents();
-  }
-}
-
-void vm_mutex_unlock(const int resource)
-{
-  
-  interrupt_status_t save;
-  
-  save = spin_lock_blocking(mrbc_monitor.vm_mutex);
-  mrbc_monitor.is_available[resource] = 1;
-  mrbc_monitor.owner[resource] = -1;
-  spin_unlock(mrbc_monitor.vm_mutex, save);
 }

@@ -495,8 +495,8 @@ static inline void mrbc_decref(mrbc_value *v)
     return;
   } 
 
-  vm_mutex_unlock( GC_MUTEX );
   (*mrbc_delfunc[v->tt])(v);
+  vm_mutex_unlock( GC_MUTEX );
 }
 
 
