@@ -3027,7 +3027,6 @@ int mrbc_vm_run( struct VM *vm )
     if( !vm->flag_preemption ) continue;	// execute next ope code.
     if( !mrbc_israised(vm) ) return vm->flag_stop; // normal return.
 
-
     // Handle exception
     vm->flag_preemption = 0;
     const mrbc_irep_catch_handler *handler;

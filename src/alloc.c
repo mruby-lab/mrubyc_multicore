@@ -437,7 +437,7 @@ static inline void merge_block(FREE_BLOCK *target, FREE_BLOCK *next)
 */
 void mrbc_init_alloc(void *ptr, unsigned int size)
 {
-  vm_mutex_lock( ALLOC_MUTEX );
+  interrupt_status_t save = vm_mutex_lock( alloc_mutex );
 
   assert( MRBC_MIN_MEMORY_BLOCK_SIZE >= sizeof(FREE_BLOCK) );
   assert( MRBC_MIN_MEMORY_BLOCK_SIZE >= (1 << MRBC_ALLOC_IGNORE_LSBS) );
@@ -475,7 +475,7 @@ void mrbc_init_alloc(void *ptr, unsigned int size)
 
   add_free_block( memory_pool, free_block );
 
-  vm_mutex_unlock( ALLOC_MUTEX );
+  vm_mutex_unlock( alloc_mutex, save );
 }
 
 
@@ -484,7 +484,7 @@ void mrbc_init_alloc(void *ptr, unsigned int size)
 */
 void mrbc_cleanup_alloc(void)
 {
-  vm_mutex_lock( ALLOC_MUTEX );
+  interrupt_status_t save = vm_mutex_lock( alloc_mutex );
 
 #if defined(MRBC_DEBUG)
   if( memory_pool ) {
@@ -493,7 +493,7 @@ void mrbc_cleanup_alloc(void)
 #endif
 
   memory_pool = 0;
-  vm_mutex_unlock( ALLOC_MUTEX );
+  vm_mutex_unlock( alloc_mutex, save );
 }
 
 
@@ -507,7 +507,7 @@ void mrbc_cleanup_alloc(void)
 void * mrbc_raw_alloc(unsigned int size)
 {
   
-  vm_mutex_lock( ALLOC_MUTEX );
+  interrupt_status_t save = vm_mutex_lock( alloc_mutex );
   
   MEMORY_POOL *pool = memory_pool;
   MRBC_ALLOC_MEMSIZE_T alloc_size = size + sizeof(USED_BLOCK);
@@ -563,7 +563,7 @@ void * mrbc_raw_alloc(unsigned int size)
     target = target->next_free;
   }
 
-  vm_mutex_unlock( ALLOC_MUTEX );
+  vm_mutex_unlock( alloc_mutex, save );
   // else out of memory
 #if defined(MRBC_OUT_OF_MEMORY)
   MRBC_OUT_OF_MEMORY();
@@ -616,7 +616,7 @@ void * mrbc_raw_alloc(unsigned int size)
 #if defined(MRBC_USE_ALLOC_PROF)
   alloc_profile();
 #endif
-  vm_mutex_unlock( ALLOC_MUTEX );
+  vm_mutex_unlock( alloc_mutex, save );
     
   return (uint8_t *)target + sizeof(USED_BLOCK);
 }
@@ -631,7 +631,7 @@ void * mrbc_raw_alloc(unsigned int size)
 */
 void * mrbc_raw_alloc_no_free(unsigned int size)
 {
-  vm_mutex_lock( ALLOC_MUTEX );
+  interrupt_status_t save = vm_mutex_lock( alloc_mutex );
 
   MEMORY_POOL *pool = memory_pool;
   MRBC_ALLOC_MEMSIZE_T alloc_size = size + (-size & 3);	// align 4 byte
@@ -671,12 +671,12 @@ void * mrbc_raw_alloc_no_free(unsigned int size)
   }
   SET_VM_ID( tail, 0xff );
 
-  vm_mutex_unlock( ALLOC_MUTEX );
+  vm_mutex_unlock( alloc_mutex, save );
 
   return (uint8_t *)tail + sizeof(USED_BLOCK);
 
  FALLBACK:
-  vm_mutex_unlock( ALLOC_MUTEX );
+  vm_mutex_unlock( alloc_mutex, save );
   return mrbc_raw_alloc(alloc_size);
 }
 
@@ -712,14 +712,14 @@ void * mrbc_raw_calloc(unsigned int nmemb, unsigned int size)
 */
 void mrbc_raw_free(void *ptr)
 {
-  vm_mutex_lock( ALLOC_MUTEX );
+  interrupt_status_t save = vm_mutex_lock( alloc_mutex );
 
   MEMORY_POOL *pool = memory_pool;
 
 #if defined(MRBC_DEBUG)
   {
     if( ptr == NULL ) {
-      vm_mutex_unlock( ALLOC_MUTEX );
+      vm_mutex_unlock( alloc_mutex, save );
       static const char msg[] = "mrbc_raw_free(): NULL pointer was given.\n";
       hal_write(2, msg, sizeof(msg)-1);
       return;
@@ -728,7 +728,7 @@ void mrbc_raw_free(void *ptr)
     FREE_BLOCK *target = BLOCK_ADRS(ptr);
     if( target < (FREE_BLOCK *)BPOOL_TOP(pool) ||
 	target > (FREE_BLOCK *)BPOOL_END(pool) ) {
-      vm_mutex_unlock( ALLOC_MUTEX );
+      vm_mutex_unlock( alloc_mutex, save );
       static const char msg[] = "mrbc_raw_free(): Outside memory pool address was specified.\n";
       hal_write(2, msg, sizeof(msg)-1);
       return;
@@ -744,14 +744,14 @@ void mrbc_raw_free(void *ptr)
     if( block == target ) {
       // found target block.
       if( IS_FREE_BLOCK(block) ) {  // is Free block?
-        vm_mutex_unlock( ALLOC_MUTEX );
+        vm_mutex_unlock( alloc_mutex, save );
         static const char msg[] = "mrbc_raw_free(): double free detected.\n";
         hal_write(2, msg, sizeof(msg)-1);
         return;
       }
 
       if( PHYS_NEXT(block) >= BPOOL_END(pool) ) {  // Is this a sentinel?
-        vm_mutex_unlock( ALLOC_MUTEX );
+        vm_mutex_unlock( alloc_mutex, save );
         static const char msg[] = "mrbc_raw_free(): no_free address was specified.\n";
         hal_write(2, msg, sizeof(msg)-1);
         return;
@@ -760,13 +760,13 @@ void mrbc_raw_free(void *ptr)
     } else {
       // not found target block.
       if( block < target ) {
-        vm_mutex_unlock( ALLOC_MUTEX );
+        vm_mutex_unlock( alloc_mutex, save );
         static const char msg[] = "mrbc_raw_free(): no_free address was specified.\n";
         hal_write(2, msg, sizeof(msg)-1);
         return;
       }
       
-      vm_mutex_unlock( ALLOC_MUTEX );
+      vm_mutex_unlock( alloc_mutex, save );
       static const char msg[] = "mrbc_raw_free(): Illegal address.\n";
       hal_write(2, msg, sizeof(msg)-1);
       return;
@@ -778,7 +778,7 @@ void mrbc_raw_free(void *ptr)
 #endif
 
   if( ptr == NULL ) {
-    vm_mutex_unlock( ALLOC_MUTEX );
+    vm_mutex_unlock( alloc_mutex, save );
     return;
   }
 
@@ -811,7 +811,7 @@ void mrbc_raw_free(void *ptr)
 #if defined(MRBC_USE_ALLOC_PROF)
   alloc_profile();
 #endif
-  vm_mutex_unlock( ALLOC_MUTEX );
+  vm_mutex_unlock( alloc_mutex, save );
 }
 
 
@@ -830,7 +830,7 @@ void * mrbc_raw_realloc(void *ptr, unsigned int size)
     return NULL;
   }
 
-  vm_mutex_lock( ALLOC_MUTEX );
+  interrupt_status_t save = vm_mutex_lock( alloc_mutex );
 
   MEMORY_POOL *pool = memory_pool;
   volatile USED_BLOCK *target = BLOCK_ADRS(ptr);
@@ -864,7 +864,7 @@ void * mrbc_raw_realloc(void *ptr, unsigned int size)
 #if defined(MRBC_USE_ALLOC_PROF)
     alloc_profile();
 #endif
-    vm_mutex_unlock( ALLOC_MUTEX );
+    vm_mutex_unlock( alloc_mutex, save );
     return ptr;
   }
 
@@ -879,21 +879,21 @@ void * mrbc_raw_realloc(void *ptr, unsigned int size)
 #if defined(MRBC_USE_ALLOC_PROF)
   alloc_profile();
 #endif
-  vm_mutex_unlock( ALLOC_MUTEX );
+  vm_mutex_unlock( alloc_mutex, save );
   return ptr;
 
 
   // expand part2.
   // new alloc and copy
  ALLOC_AND_COPY: {
-    vm_mutex_unlock( ALLOC_MUTEX );
+    vm_mutex_unlock( alloc_mutex, save );
     void *new_ptr = mrbc_raw_alloc(size);
     if( new_ptr == NULL ) return NULL;  // ENOMEM
 
-    vm_mutex_lock( ALLOC_MUTEX );
+    interrupt_status_t save = vm_mutex_lock( alloc_mutex );
     memcpy(new_ptr, ptr, BLOCK_SIZE(target) - sizeof(USED_BLOCK));
     mrbc_set_vm_id(new_ptr, target->vm_id);
-    vm_mutex_unlock( ALLOC_MUTEX );
+    vm_mutex_unlock( alloc_mutex, save );
 
     mrbc_raw_free(ptr);
 
@@ -929,9 +929,9 @@ void * mrbc_alloc(const struct VM *vm, unsigned int size)
   void *ptr = mrbc_raw_alloc(size);
   if( ptr == NULL ) return NULL;	// ENOMEM
 
-  vm_mutex_lock( ALLOC_MUTEX );
+  interrupt_status_t save = vm_mutex_lock( alloc_mutex );
   if( vm ) mrbc_set_vm_id(ptr, vm->vm_id);
-  vm_mutex_unlock( ALLOC_MUTEX );
+  vm_mutex_unlock( alloc_mutex, save );
 
   return ptr;
 }
@@ -951,9 +951,9 @@ void * mrbc_calloc(const struct VM *vm, unsigned int nmemb, unsigned int size)
   void *ptr = mrbc_raw_calloc(nmemb, size);
   if( ptr == NULL ) return NULL;	// ENOMEM
 
-  vm_mutex_lock( ALLOC_MUTEX );
+  interrupt_status_t save = vm_mutex_lock( alloc_mutex );
   if( vm ) mrbc_set_vm_id(ptr, vm->vm_id);
-  vm_mutex_unlock( ALLOC_MUTEX );
+  vm_mutex_unlock( alloc_mutex, save );
 
   return ptr;
 }
@@ -1045,7 +1045,7 @@ void mrbc_alloc_statistics( struct MRBC_ALLOC_STATISTICS *ret )
 */
 void mrbc_alloc_start_profiling(void)
 {
-  vm_mutex_lock( ALLOC_MUTEX );
+  interrupt_status_t save = vm_mutex_lock( alloc_mutex );
 
   if (profiling) return;
   profiling = 1;
@@ -1053,7 +1053,7 @@ void mrbc_alloc_start_profiling(void)
   alloc_profile();
   alloc_prof.initial = alloc_prof.min = alloc_prof.max;
 
-  vm_mutex_unlock( ALLOC_MUTEX );
+  vm_mutex_unlock( alloc_mutex, save );
 }
 
 //================================================================
@@ -1063,12 +1063,12 @@ void mrbc_alloc_stop_profiling(void)
 {
   if (!profiling) return;
   char *debug_msg = "stop_profiling\n";
-  // hal_write(2, debug_msg, sizeof(debug_msg)-1);
-  vm_mutex_lock( ALLOC_MUTEX );
+  hal_write(2, debug_msg, sizeof(debug_msg)-1);
+  interrupt_status_t save = vm_mutex_lock( alloc_mutex );
 
   profiling = 0;
   
-  vm_mutex_unlock( ALLOC_MUTEX );
+  vm_mutex_unlock( alloc_mutex, save );
 }
 
 //================================================================
