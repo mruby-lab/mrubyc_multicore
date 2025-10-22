@@ -23,6 +23,7 @@
 //@endcond
 
 /***** Local headers ********************************************************/
+# include "hal.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -302,9 +303,11 @@ typedef struct RObject mrbc_value;
 
 
 #if defined(MRBC_DEBUG)
-#define MRBC_INIT_OBJECT_HEADER(p, t)  (p)->ref_count = 1; (p)->obj_mark_[0] = (t)[0]; (p)->obj_mark_[1] = (t)[1]
+#define MRBC_INIT_OBJECT_HEADER(p, t)  interrupt_status_t save = vm_mutex_lock( gc_mutex ); (p)->ref_count = 1; (p)->obj_mark_[0] = (t)[0]; (p)->obj_mark_[1] = (t)[1]; vm_mutex_unlock( gc_mutex, save );
+// #define MRBC_INIT_OBJECT_HEADER(p, t)  (p)->ref_count = 1; (p)->obj_mark_[0] = (t)[0]; (p)->obj_mark_[1] = (t)[1]
 #else
-#define MRBC_INIT_OBJECT_HEADER(p, t)  (p)->ref_count = 1
+#define MRBC_INIT_OBJECT_HEADER(p, t)  interrupt_status_t save = vm_mutex_lock( gc_mutex ); (p)->ref_count = 1; vm_mutex_unlock( gc_mutex, save );
+// #define MRBC_INIT_OBJECT_HEADER(p, t)  (p)->ref_count = 1
 #endif
 
 
@@ -463,9 +466,13 @@ static inline void mrbc_incref(mrbc_value *v)
 {
   if( v->tt <= MRBC_TT_INC_DEC_THRESHOLD ) return;
 
+  interrupt_status_t save = vm_mutex_lock( gc_mutex );
+  
   assert( v->obj->ref_count != 0 );
   assert( v->obj->ref_count != 0xff );	// check max value.
   v->obj->ref_count++;
+
+  vm_mutex_unlock( gc_mutex, save );
 }
 
 
@@ -478,12 +485,19 @@ static inline void mrbc_decref(mrbc_value *v)
 {
   if( v->tt <= MRBC_TT_INC_DEC_THRESHOLD ) return;
 
+  interrupt_status_t save = vm_mutex_lock( gc_mutex );
+  
   assert( v->obj->ref_count != 0 );
   assert( v->obj->ref_count != 0xffff );	// check broken data.
 
-  if( --v->obj->ref_count != 0 ) return;
+  if( --v->obj->ref_count != 0 ) {
+    vm_mutex_unlock( gc_mutex, save );
+    return;
+  } 
+  vm_mutex_unlock( gc_mutex, save );
 
   (*mrbc_delfunc[v->tt])(v);
+  
 }
 
 

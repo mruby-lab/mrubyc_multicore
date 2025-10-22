@@ -162,7 +162,12 @@ static int search_index( uint16_t hash, const char *str )
 */
 static int add_index( uint16_t hash, const char *str )
 {
-  if( sym_index_pos >= MAX_SYMBOLS_COUNT ) return -1;	// check overflow.
+  interrupt_status_t save = vm_mutex_lock( symbol_mutex );
+  
+  if( sym_index_pos >= MAX_SYMBOLS_COUNT ) {
+    vm_mutex_unlock( symbol_mutex, save );
+    return -1;	// check overflow.
+  }
 
   int idx = sym_index_pos++;
 
@@ -192,6 +197,7 @@ static int add_index( uint16_t hash, const char *str )
   }
 #endif
 
+  vm_mutex_unlock( symbol_mutex, save );
   return idx;
 }
 
@@ -203,8 +209,12 @@ static int add_index( uint16_t hash, const char *str )
 */
 void mrbc_cleanup_symbol(void)
 {
+  interrupt_status_t save = vm_mutex_lock( symbol_mutex );
+  
   memset(sym_index, 0, sizeof(sym_index));
   sym_index_pos = 0;
+
+  vm_mutex_unlock( symbol_mutex, save );
 }
 
 
