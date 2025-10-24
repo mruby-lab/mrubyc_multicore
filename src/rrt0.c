@@ -185,6 +185,26 @@ void mrbc_task_switch(void)
   }
 }
 
+//================================================================
+/*! add tasks made executable by other core to ready queue
+
+*/
+void mrbc_task_switch_by_other_core(void) {
+  int8_t procid = get_procid();
+  
+  interrupt_status_t save_mutex_lock;  
+
+  save_mutex_lock = vm_mutex_lock( task_mutex );
+  for(volatile mrbc_tcb * tcb = q_waiting_[procid]; tcb != NULL; tcb = tcb->next ) {
+    if(tcb->reason == TASKREASON_CORERESPONSE) {
+      q_delete_task(tcb);
+      tcb->state = TASKSTATE_READY;
+      tcb->reason = 0;
+      q_insert_task(tcb);
+    }
+  }
+  vm_mutex_unlock( task_mutex, save_mutex_lock );
+}
 
 //================================================================
 /*! create (allocate) TCB.
@@ -364,6 +384,7 @@ int mrbc_run(void)
 #endif
 
   while( 1 ) {
+    mrbc_task_switch_by_other_core();
     mrbc_tcb *tcb = q_ready_[procid];
     if( tcb == NULL ) {		// no task to run.
       hal_idle_cpu();
@@ -723,8 +744,10 @@ mrbc_mutex * mrbc_mutex_init( mrbc_mutex *mutex )
     if( mutex == NULL ) return NULL;	// ENOMEM
   }
 
+  interrupt_status_t save = vm_mutex_lock( task_mutex );
   static const mrbc_mutex init_val = MRBC_MUTEX_INITIALIZER;
   *mutex = init_val;
+  vm_mutex_unlock( task_mutex, save );
 
   return mutex;
 }
@@ -741,7 +764,7 @@ int mrbc_mutex_lock( mrbc_mutex *mutex, mrbc_tcb *tcb )
   MRBC_MUTEX_TRACE("mutex lock / MUTEX: %p TCB: %p",  mutex, tcb );
 
   int ret = 0;
-  uint32_t save = hal_disable_irq();
+  interrupt_status_t save_mutex_lock = vm_mutex_lock( task_mutex );
 
   // Try lock mutex;
   if( mutex->lock == 0 ) {      // a future does use TAS?
@@ -751,7 +774,7 @@ int mrbc_mutex_lock( mrbc_mutex *mutex, mrbc_tcb *tcb )
     goto DONE;
   }
   MRBC_MUTEX_TRACE("  lock FAIL\n" );
-
+  
   // Can't lock mutex
   // check recursive lock.
   if( mutex->tcb == tcb ) {
@@ -766,9 +789,9 @@ int mrbc_mutex_lock( mrbc_mutex *mutex, mrbc_tcb *tcb )
   tcb->mutex = mutex;
   q_insert_task(tcb);
   tcb->vm.flag_preemption = 1;
-
+  
  DONE:
-  hal_enable_irq(save);
+  vm_mutex_unlock( task_mutex, save_mutex_lock );
 
   return ret;
 }
@@ -782,52 +805,50 @@ int mrbc_mutex_lock( mrbc_mutex *mutex, mrbc_tcb *tcb )
 */
 int mrbc_mutex_unlock( mrbc_mutex *mutex, mrbc_tcb *tcb )
 {
-  int8_t procid = get_procid();
   MRBC_MUTEX_TRACE("mutex unlock / MUTEX: %p TCB: %p\n",  mutex, tcb );
 
   // check some parameters.
   if( !mutex->lock ) return 1;
   if( mutex->tcb != tcb ) return 2;
 
-  uint32_t save = hal_disable_irq();
+  interrupt_status_t save_mutex_lock = vm_mutex_lock( task_mutex );
 
   // wakeup ONE waiting task if exist.
   mrbc_tcb *tcb1;
-  for( tcb1 = q_waiting_[procid]; tcb1 != NULL; tcb1 = tcb1->next ) {
-    if( tcb1->reason == TASKREASON_MUTEX && tcb1->mutex == mutex ) break;
-  }
-  if( tcb1 ) {
-    MRBC_MUTEX_TRACE("SW1: TCB: %p\n", tcb1 );
-    mutex->tcb = tcb1;
+  
+  for (int8_t procid = 0; procid < NUM_CORES; procid++) {
+    for( tcb1 = q_waiting_[procid]; tcb1 != NULL; tcb1 = tcb1->next ) {
+      if( tcb1->reason == TASKREASON_MUTEX && tcb1->mutex == mutex ) break;
+    }
+    if( tcb1 ) {  
+      MRBC_MUTEX_TRACE("SW1: TCB: %p\n", tcb1 );
+      mutex->tcb = tcb1;
 
-    q_delete_task(tcb1);
-    tcb1->state = TASKSTATE_READY;
-    tcb1->reason = 0;
-    q_insert_task(tcb1);
+      tcb1->reason = TASKREASON_CORERESPONSE;
+      
+      goto DONE;
+    }
 
-    preempt_running_task();
-    goto DONE;
+    // find ONE mutex locked task in suspended queue.
+    for( tcb1 = q_suspended_[procid]; tcb1 != NULL; tcb1 = tcb1->next ) {
+      if( tcb1->reason == TASKREASON_MUTEX && tcb1->mutex == mutex ) break;
+    }
+    if( tcb1 ) {
+      MRBC_MUTEX_TRACE("SW2: TCB: %p\n", tcb1 );
+      mutex->tcb = tcb1;
+      tcb1->reason = 0;
+      goto DONE;
+    }
   }
-
-  // find ONE mutex locked task in suspended queue.
-  for( tcb1 = q_suspended_[procid]; tcb1 != NULL; tcb1 = tcb1->next ) {
-    if( tcb1->reason == TASKREASON_MUTEX && tcb1->mutex == mutex ) break;
-  }
-  if( tcb1 ) {
-    MRBC_MUTEX_TRACE("SW2: TCB: %p\n", tcb1 );
-    mutex->tcb = tcb1;
-    tcb1->reason = 0;
-    goto DONE;
-  }
-
+  
   // other case, unlock mutex
-  MRBC_MUTEX_TRACE("mutex unlock all.\n" );
+  MRBC_MUTEX_TRACE("mutex unlock all.\n" );    
   mutex->lock = 0;
   mutex->tcb = 0;
 
  DONE:
-  hal_enable_irq(save);
-
+  vm_mutex_unlock( task_mutex, save_mutex_lock );
+  
   return 0;
 }
 
@@ -843,7 +864,8 @@ int mrbc_mutex_trylock( mrbc_mutex *mutex, mrbc_tcb *tcb )
   MRBC_MUTEX_TRACE("mutex try lock / MUTEX: %p TCB: %p",  mutex, tcb );
 
   int ret;
-  uint32_t save = hal_disable_irq();
+  // interrupt_status_t save_disable_irq = hal_disable_irq();
+  interrupt_status_t save_mutex_lock = vm_mutex_lock( task_mutex );
 
   if( mutex->lock == 0 ) {
     mutex->lock = 1;
@@ -856,7 +878,7 @@ int mrbc_mutex_trylock( mrbc_mutex *mutex, mrbc_tcb *tcb )
     ret = 1;
   }
 
-  hal_enable_irq(save);
+  vm_mutex_unlock( task_mutex, save_mutex_lock );
   return ret;
 }
 

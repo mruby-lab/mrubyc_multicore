@@ -50,6 +50,7 @@ enum MrbcTaskReason {
   TASKREASON_SLEEP = 0x01,
   TASKREASON_MUTEX = 0x02,
   TASKREASON_JOIN  = 0x04,
+  TASKREASON_CORERESPONSE = 0x08 //!<wait for responding own core
 };
 
 static const int MRBC_TASK_DEFAULT_PRIORITY = 128;
@@ -109,6 +110,7 @@ typedef struct RMutex {
 //@cond
 void mrbc_tick_increment(void);
 void mrbc_task_switch(void);
+void mrbc_task_switch_by_other_core(void);
 mrbc_tcb *mrbc_tcb_new(int regs_size, enum MrbcTaskState task_state, int priority);
 mrbc_tcb *mrbc_create_task(const void *byte_code, mrbc_tcb *tcb);
 int mrbc_delete_task(mrbc_tcb *tcb);
