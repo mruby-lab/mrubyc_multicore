@@ -133,6 +133,15 @@ inline static void preempt_running_task(void)
   }
 }
 
+//================================================================
+/*! preempt running task
+*/
+inline static void fire_preemption_of_other_core(int8_t procid)
+{
+  for( mrbc_tcb *t = q_ready_[procid]; t != NULL; t = t->next ) {
+    if( t->state == TASKSTATE_RUNNING ) t->vm.flag_preemption = 1;
+  }
+}
 
 //================================================================
 /*! Tick timer interrupt handler.
@@ -195,7 +204,7 @@ void mrbc_task_switch_by_other_core(void) {
   interrupt_status_t save_mutex_lock;  
 
   save_mutex_lock = vm_mutex_lock( task_mutex );
-  for(volatile mrbc_tcb * tcb = q_waiting_[procid]; tcb != NULL; tcb = tcb->next ) {
+  for(mrbc_tcb * tcb = q_waiting_[procid]; tcb != NULL; tcb = tcb->next ) {
     if(tcb->reason == TASKREASON_CORERESPONSE) {
       q_delete_task(tcb);
       tcb->state = TASKSTATE_READY;
@@ -825,6 +834,7 @@ int mrbc_mutex_unlock( mrbc_mutex *mutex, mrbc_tcb *tcb )
       mutex->tcb = tcb1;
 
       tcb1->reason = TASKREASON_CORERESPONSE;
+      fire_preemption_of_other_core(procid);
       
       goto DONE;
     }
@@ -864,7 +874,6 @@ int mrbc_mutex_trylock( mrbc_mutex *mutex, mrbc_tcb *tcb )
   MRBC_MUTEX_TRACE("mutex try lock / MUTEX: %p TCB: %p",  mutex, tcb );
 
   int ret;
-  // interrupt_status_t save_disable_irq = hal_disable_irq();
   interrupt_status_t save_mutex_lock = vm_mutex_lock( task_mutex );
 
   if( mutex->lock == 0 ) {
