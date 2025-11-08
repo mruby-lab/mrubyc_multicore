@@ -82,10 +82,9 @@ typedef struct RTcb {
   uint8_t reason;		//!< sub state. defined in MrbcTaskReason.
   char name[MRBC_TASK_NAME_LEN+1]; //!< task name (optional)
 
-  union {
-    uint32_t wakeup_tick;	//!< wakeup time for sleep state.
-    struct RMutex *mutex;
-  };
+  uint32_t wakeup_tick;
+  struct RMutex *mutex;
+  
   const struct RTcb *tcb_join;  //!< joined task.
 
   struct VM vm;
@@ -127,7 +126,7 @@ void mrbc_terminate_task(mrbc_tcb *tcb);
 void mrbc_join_task(mrbc_tcb *tcb, const mrbc_tcb *tcb_join);
 mrbc_mutex *mrbc_mutex_init(mrbc_mutex *mutex);
 int mrbc_mutex_lock(mrbc_mutex *mutex, mrbc_tcb *tcb);
-int mrbc_mutex_unlock(mrbc_mutex *mutex, mrbc_tcb *tcb);
+int mrbc_mutex_unlock(volatile mrbc_mutex *mutex, volatile mrbc_tcb *tcb);
 int mrbc_mutex_trylock(mrbc_mutex *mutex, mrbc_tcb *tcb);
 void mrbc_cleanup(void);
 void mrbc_init(void *heap_ptr, unsigned int size);

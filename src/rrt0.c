@@ -19,6 +19,7 @@
 #include <string.h>
 #include <assert.h>
 #include <stdio.h>
+#include <stdatomic.h>
 //@endcond
 
 /***** Local headers ********************************************************/
@@ -45,6 +46,9 @@ static mrbc_tcb *task_queue_[NUM_TASK_QUEUE][NUM_CORES];
 static volatile uint32_t tick_;
 static volatile uint32_t wakeup_tick_[NUM_CORES] = {(1 << 16), (1 << 16)}; // no significant meaning.
 
+volatile static uint32_t gen_counter[NUM_TASK_QUEUE][NUM_CORES] = {{0, 0}, {0, 0}, {0, 0}, {0, 0}};
+atomic_flag task_mutex_lock = ATOMIC_FLAG_INIT;
+atomic_flag flag_unlocking_now = ATOMIC_FLAG_INIT;
 
 /***** Global variables *****************************************************/
 /***** Signal catching functions ********************************************/
@@ -62,7 +66,7 @@ static volatile uint32_t wakeup_tick_[NUM_CORES] = {(1 << 16), (1 << 16)}; // no
 */
 static void q_insert_task(mrbc_tcb *p_tcb)
 {
-  int8_t procid = get_procid();
+  uint procid = get_procid();
   // select target queue pointer.
   //                    state value = 0  1  2  3  4  5  6  7  8
   //                             /2   0, 0, 1, 1, 2, 2, 3, 3, 4
@@ -74,6 +78,7 @@ static void q_insert_task(mrbc_tcb *p_tcb)
      (p_tcb->priority_preemption < (*pp_q)->priority_preemption)) {
     p_tcb->next = *pp_q;
     *pp_q       = p_tcb;
+    gen_counter[ conv_tbl[ p_tcb->state / 2 ]][procid]++;
     return;
   }
 
@@ -87,6 +92,8 @@ static void q_insert_task(mrbc_tcb *p_tcb)
   // insert tcb to queue.
   p_tcb->next = p->next;
   p->next     = p_tcb;
+  
+  gen_counter[ conv_tbl[ p_tcb->state / 2 ]][procid]++;
 }
 
 
@@ -97,7 +104,7 @@ static void q_insert_task(mrbc_tcb *p_tcb)
 */
 static void q_delete_task(mrbc_tcb *p_tcb)
 {
-  int8_t procid = get_procid();
+  uint procid = get_procid();
   // select target queue pointer. (same as q_insert_task)
   static const uint8_t conv_tbl[] = { 0,    1,    2,    0,    3 };
   mrbc_tcb **pp_q = &task_queue_[ conv_tbl[ p_tcb->state / 2 ]][procid];
@@ -105,6 +112,7 @@ static void q_delete_task(mrbc_tcb *p_tcb)
   if( *pp_q == p_tcb ) {
     *pp_q       = p_tcb->next;
     p_tcb->next = NULL;
+    gen_counter[ conv_tbl[ p_tcb->state / 2 ]][procid]++;
     return;
   }
 
@@ -113,6 +121,7 @@ static void q_delete_task(mrbc_tcb *p_tcb)
     if( p->next == p_tcb ) {
       p->next     = p_tcb->next;
       p_tcb->next = NULL;
+      gen_counter[ conv_tbl[ p_tcb->state / 2 ]][procid]++;
       return;
     }
 
@@ -134,9 +143,11 @@ inline static void preempt_running_task(void)
 }
 
 //================================================================
-/*! preempt running task
+/*! fire preemption of other core forcely
+    The vm_mutex isn't used 
+    because the RUNNING task isn't appended ready queue directly.
 */
-inline static void fire_preemption_of_other_core(int8_t procid)
+inline static void fire_preemption_of_other_core(uint procid)
 {
   for( mrbc_tcb *t = q_ready_[procid]; t != NULL; t = t->next ) {
     if( t->state == TASKSTATE_RUNNING ) t->vm.flag_preemption = 1;
@@ -158,7 +169,7 @@ void mrbc_tick_increment(void)
 
 void mrbc_task_switch(void)
 {
-  int8_t procid = get_procid();
+  uint procid = get_procid();
   
   // Decrease the time slice value for running tasks.
   mrbc_tcb *tcb = q_ready_[procid];
@@ -199,20 +210,31 @@ void mrbc_task_switch(void)
 
 */
 void mrbc_task_switch_by_other_core(void) {
-  int8_t procid = get_procid();
   
-  interrupt_status_t save_mutex_lock;  
-
-  save_mutex_lock = vm_mutex_lock( task_mutex );
-  for(mrbc_tcb * tcb = q_waiting_[procid]; tcb != NULL; tcb = tcb->next ) {
-    if(tcb->reason == TASKREASON_CORERESPONSE) {
-      q_delete_task(tcb);
-      tcb->state = TASKSTATE_READY;
-      tcb->reason = 0;
-      q_insert_task(tcb);
+  interrupt_status_t save;  
+  
+  save = hal_disable_irq();
+  while ( atomic_flag_test_and_set_explicit(&task_mutex_lock, memory_order_acq_rel) );
+    
+  volatile uint32_t gen_before, gen_after;
+  uint procid = get_procid();
+  
+  do {
+    gen_before = gen_counter[2][procid];
+    for (volatile mrbc_tcb * tcb = q_waiting_[procid]; tcb != NULL; tcb = tcb->next ) {
+      if ( tcb->reason == TASKREASON_CORERESPONSE) {
+        q_delete_task((mrbc_tcb *)tcb);
+        tcb->state = TASKSTATE_READY;
+        tcb->reason = 0;
+        q_insert_task((mrbc_tcb *)tcb);
+      }
     }
-  }
-  vm_mutex_unlock( task_mutex, save_mutex_lock );
+    gen_after = gen_counter[2][procid];
+  } while (gen_before != gen_after);
+  
+
+  atomic_flag_clear_explicit(&task_mutex_lock, memory_order_release);
+  hal_enable_irq(save);
 }
 
 //================================================================
@@ -336,7 +358,7 @@ void mrbc_set_task_name(mrbc_tcb *tcb, const char *name)
 */
 mrbc_tcb * mrbc_find_task(const char *name)
 {
-  int8_t procid = get_procid();
+  uint procid = get_procid();
   mrbc_tcb *tcb = 0;
   uint32_t save = hal_disable_irq();
 
@@ -385,7 +407,7 @@ int mrbc_start_task(mrbc_tcb *tcb)
 int mrbc_run(void)
 {
   int ret = 0;
-  int8_t procid = get_procid();
+  uint procid = get_procid();
 
   (void)ret;	// avoid warning.
 #if MRBC_SCHEDULER_EXIT
@@ -487,7 +509,7 @@ EMSCRIPTEN_KEEPALIVE
 int
 mrbc_run_step(void)
 {
-  int8_t procid = get_procid();
+  uint procid = get_procid();
   // Take the task that can be executed
   mrbc_tcb *tcb = q_ready_[procid];
   if (tcb == NULL) {
@@ -554,21 +576,26 @@ mrbc_run_step(void)
 */
 void mrbc_sleep_ms(mrbc_tcb *tcb, uint32_t ms)
 {
-  int8_t procid = get_procid();
+  uint procid = get_procid();
   
   uint32_t save = hal_disable_irq();
   q_delete_task(tcb);
+  while ( atomic_flag_test_and_set_explicit(&task_mutex_lock, memory_order_acq_rel) );
   tcb->state       = TASKSTATE_WAITING;
+  atomic_flag_clear_explicit(&task_mutex_lock, memory_order_release);
   tcb->reason      = TASKREASON_SLEEP;
   tcb->wakeup_tick = tick_ + (ms / MRBC_TICK_UNIT) + !!(ms % MRBC_TICK_UNIT);
+
 
   if( (int32_t)(tcb->wakeup_tick - wakeup_tick_[procid]) < 0 ) {
     wakeup_tick_[procid] = tcb->wakeup_tick;
   }
 
+  
   q_insert_task(tcb);
+  
   hal_enable_irq(save);
-
+  
   tcb->vm.flag_preemption = 1;
 }
 
@@ -580,7 +607,7 @@ void mrbc_sleep_ms(mrbc_tcb *tcb, uint32_t ms)
 */
 void mrbc_wakeup_task(mrbc_tcb *tcb)
 {
-  int8_t procid = get_procid();
+  uint procid = get_procid();
   switch( tcb->state ) {
   case TASKSTATE_SUSPENDED:
     mrbc_resume_task( tcb );    // for sleep without arguments.
@@ -669,7 +696,7 @@ void mrbc_suspend_task(mrbc_tcb *tcb)
 */
 void mrbc_resume_task(mrbc_tcb *tcb)
 {
-  int8_t procid = get_procid();
+  uint procid = get_procid();
 
   if( tcb->state != TASKSTATE_SUSPENDED ) return;
 
@@ -753,10 +780,14 @@ mrbc_mutex * mrbc_mutex_init( mrbc_mutex *mutex )
     if( mutex == NULL ) return NULL;	// ENOMEM
   }
 
-  interrupt_status_t save = vm_mutex_lock( task_mutex );
+  interrupt_status_t save;
+  save = hal_disable_irq();
+  while ( atomic_flag_test_and_set_explicit(&task_mutex_lock, memory_order_acq_rel) );
   static const mrbc_mutex init_val = MRBC_MUTEX_INITIALIZER;
   *mutex = init_val;
-  vm_mutex_unlock( task_mutex, save );
+  atomic_flag_clear_explicit(&task_mutex_lock, memory_order_release);
+  hal_enable_irq(save);
+  
 
   return mutex;
 }
@@ -772,9 +803,12 @@ int mrbc_mutex_lock( mrbc_mutex *mutex, mrbc_tcb *tcb )
 {
   MRBC_MUTEX_TRACE("mutex lock / MUTEX: %p TCB: %p",  mutex, tcb );
 
+  while ( atomic_flag_test_and_set(&flag_unlocking_now) );
   int ret = 0;
-  interrupt_status_t save_mutex_lock = vm_mutex_lock( task_mutex );
-
+  interrupt_status_t save;
+  save = hal_disable_irq();
+  while ( atomic_flag_test_and_set_explicit(&task_mutex_lock, memory_order_acq_rel) );
+  
   // Try lock mutex;
   if( mutex->lock == 0 ) {      // a future does use TAS?
     mutex->lock = 1;
@@ -800,8 +834,10 @@ int mrbc_mutex_lock( mrbc_mutex *mutex, mrbc_tcb *tcb )
   tcb->vm.flag_preemption = 1;
   
  DONE:
-  vm_mutex_unlock( task_mutex, save_mutex_lock );
-
+  atomic_flag_clear_explicit(&task_mutex_lock, memory_order_release);
+  hal_enable_irq(save);
+  
+  atomic_flag_clear(&flag_unlocking_now);
   return ret;
 }
 
@@ -812,53 +848,85 @@ int mrbc_mutex_lock( mrbc_mutex *mutex, mrbc_tcb *tcb )
   @param  mutex		pointer to mutex.
   @param  tcb		pointer to TCB.
 */
-int mrbc_mutex_unlock( mrbc_mutex *mutex, mrbc_tcb *tcb )
+int mrbc_mutex_unlock( volatile mrbc_mutex *mutex, volatile mrbc_tcb *tcb )
 {
   MRBC_MUTEX_TRACE("mutex unlock / MUTEX: %p TCB: %p\n",  mutex, tcb );
+
+  atomic_flag_test_and_set(&flag_unlocking_now);
 
   // check some parameters.
   if( !mutex->lock ) return 1;
   if( mutex->tcb != tcb ) return 2;
 
-  interrupt_status_t save_mutex_lock = vm_mutex_lock( task_mutex );
+  interrupt_status_t save;
 
-  // wakeup ONE waiting task if exist.
-  mrbc_tcb *tcb1;
-  
-  for (int8_t procid = 0; procid < NUM_CORES; procid++) {
-    for( tcb1 = q_waiting_[procid]; tcb1 != NULL; tcb1 = tcb1->next ) {
-      if( tcb1->reason == TASKREASON_MUTEX && tcb1->mutex == mutex ) break;
-    }
+  for ( uint scan_procid = 0; scan_procid < NUM_CORES; scan_procid++ ) {
+    // wakeup ONE waiting task if exist.
+    mrbc_tcb *tcb1;
+    uint32_t gen_before, gen_after;
+    uint procid = get_procid();
+    
+    g_lock();
+    save = hal_disable_irq();
+    while ( atomic_flag_test_and_set_explicit(&task_mutex_lock, memory_order_acq_rel) );
+    
+    do {
+      gen_before = gen_counter[2][scan_procid];
+      for( tcb1 = q_waiting_[scan_procid]; tcb1 != NULL; tcb1 = tcb1->next ) {
+        if ( tcb1->reason == TASKREASON_MUTEX && tcb1->mutex == mutex ) break;
+      }
+      gen_after = gen_counter[2][scan_procid];
+    } while ( scan_procid != procid && gen_before != gen_after);
+    
     if( tcb1 ) {  
       MRBC_MUTEX_TRACE("SW1: TCB: %p\n", tcb1 );
+      
       mutex->tcb = tcb1;
-
+      
       tcb1->reason = TASKREASON_CORERESPONSE;
-      fire_preemption_of_other_core(procid);
+      fire_preemption_of_other_core(scan_procid);
       
       goto DONE;
     }
 
-    // find ONE mutex locked task in suspended queue.
-    for( tcb1 = q_suspended_[procid]; tcb1 != NULL; tcb1 = tcb1->next ) {
-      if( tcb1->reason == TASKREASON_MUTEX && tcb1->mutex == mutex ) break;
+    atomic_flag_clear_explicit(&task_mutex_lock, memory_order_release);
+    hal_enable_irq(save);
+    g_unlock();
+    
+    g_lock();
+    save = hal_disable_irq();
+    while ( atomic_flag_test_and_set_explicit(&task_mutex_lock, memory_order_acq_rel) );
+    
+    for( tcb1 = q_suspended_[scan_procid]; tcb1 != NULL; tcb1 = tcb1->next ) {
+      if ( tcb1->reason == TASKREASON_MUTEX && tcb1->mutex == mutex ) break;
     }
+    
     if( tcb1 ) {
       MRBC_MUTEX_TRACE("SW2: TCB: %p\n", tcb1 );
       mutex->tcb = tcb1;
       tcb1->reason = 0;
       goto DONE;
     }
+    atomic_flag_clear_explicit(&task_mutex_lock, memory_order_release);
+    hal_enable_irq(save);
+    g_unlock();
   }
+  
+  g_lock();
+  save = hal_disable_irq();
+  while ( atomic_flag_test_and_set_explicit(&task_mutex_lock, memory_order_acq_rel) );
   
   // other case, unlock mutex
   MRBC_MUTEX_TRACE("mutex unlock all.\n" );    
   mutex->lock = 0;
   mutex->tcb = 0;
-
- DONE:
-  vm_mutex_unlock( task_mutex, save_mutex_lock );
   
+ DONE:
+  atomic_flag_clear_explicit(&task_mutex_lock, memory_order_release);
+  hal_enable_irq(save);
+  g_unlock();
+  
+  atomic_flag_clear(&flag_unlocking_now);
   return 0;
 }
 
@@ -874,7 +942,10 @@ int mrbc_mutex_trylock( mrbc_mutex *mutex, mrbc_tcb *tcb )
   MRBC_MUTEX_TRACE("mutex try lock / MUTEX: %p TCB: %p",  mutex, tcb );
 
   int ret;
-  interrupt_status_t save_mutex_lock = vm_mutex_lock( task_mutex );
+  interrupt_status_t save;
+  save = hal_disable_irq();
+  while ( atomic_flag_test_and_set_explicit(&task_mutex_lock, memory_order_acq_rel) );
+  
 
   if( mutex->lock == 0 ) {
     mutex->lock = 1;
@@ -887,7 +958,9 @@ int mrbc_mutex_trylock( mrbc_mutex *mutex, mrbc_tcb *tcb )
     ret = 1;
   }
 
-  vm_mutex_unlock( task_mutex, save_mutex_lock );
+  atomic_flag_clear_explicit(&task_mutex_lock, memory_order_release);
+  hal_enable_irq(save);
+  
   return ret;
 }
 
@@ -898,7 +971,7 @@ int mrbc_mutex_trylock( mrbc_mutex *mutex, mrbc_tcb *tcb )
 */
 void mrbc_cleanup(void)
 {
-  int8_t procid = get_procid();
+  uint procid = get_procid();
   mrbc_cleanup_alloc();
   mrbc_cleanup_vm();
   mrbc_cleanup_symbol();
@@ -1008,7 +1081,7 @@ static void c_task_get(mrbc_vm *vm, mrbc_value v[], int argc)
 */
 static void c_task_list(mrbc_vm *vm, mrbc_value v[], int argc)
 {
-  int8_t procid = get_procid();
+  uint procid = get_procid();
   mrbc_value ret = mrbc_array_new(vm, 1);
 
   uint32_t save = hal_disable_irq();
@@ -1034,7 +1107,7 @@ static void c_task_list(mrbc_vm *vm, mrbc_value v[], int argc)
 */
 static void c_task_name_list(mrbc_vm *vm, mrbc_value v[], int argc)
 {
-  int8_t procid = get_procid();
+  uint procid = get_procid();
   mrbc_value ret = mrbc_array_new(vm, 1);
 
   uint32_t save = hal_disable_irq();
@@ -1634,7 +1707,7 @@ void pq(const mrbc_tcb *p_tcb)
 
 void pqall(void)
 {
-  int8_t procid = get_procid();
+  uint procid = get_procid();
   uint32_t save = hal_disable_irq();
   mrbc_printf("<< tick_ = %d, wakeup_tick_ = %d >>\n", tick_, wakeup_tick_[procid]);
   mrbc_printf("<<<<< DORMANT >>>>>\n");   pq(q_dormant_[procid]);

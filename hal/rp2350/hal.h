@@ -66,6 +66,8 @@ void hal_init(void);
 # define vm_mutex_lock(mutex)         (spin_lock_blocking(mutex))
 # define vm_mutex_unlock(mutex, save) (spin_unlock(mutex, save))
 # define get_procid()                 (get_core_num())
+# define g_lock()                     (multicore_lockout_start_blocking())
+# define g_unlock()                   (multicore_lockout_end_blocking())
 
 /***** Typedefs *************************************************************/
 typedef uint32_t interrupt_status_t;
