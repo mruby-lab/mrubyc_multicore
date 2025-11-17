@@ -50,6 +50,7 @@ enum MrbcTaskReason {
   TASKREASON_SLEEP = 0x01,
   TASKREASON_MUTEX = 0x02,
   TASKREASON_JOIN  = 0x04,
+  TASKREASON_CORERESPONSE = 0x08,
 };
 
 static const int MRBC_TASK_DEFAULT_PRIORITY = 128;
@@ -73,7 +74,7 @@ typedef struct RTcb {
 #if defined(MRBC_DEBUG)
   uint8_t obj_mark_[4];		//!< set "TCB\0" for debug.
 #endif
-  struct RTcb *next;		//!< daisy chain in task queue.
+  struct RTcb * volatile next;		//!< daisy chain in task queue.
   uint8_t priority;		//!< task priority. initial value.
   uint8_t priority_preemption;	//!< task priority. effective value.
   volatile uint8_t timeslice;	//!< time slice counter.
@@ -128,6 +129,7 @@ int mrbc_mutex_lock(mrbc_mutex *mutex, mrbc_tcb *tcb);
 int mrbc_mutex_unlock(mrbc_mutex *mutex, mrbc_tcb *tcb);
 int mrbc_mutex_trylock(mrbc_mutex *mutex, mrbc_tcb *tcb);
 void mrbc_cleanup(void);
+void mrbc_send_to_core(mrbc_tcb *tcb, volatile uint procid);
 void mrbc_init(void *heap_ptr, unsigned int size);
 void pq(const mrbc_tcb *p_tcb);
 void pqall(void);

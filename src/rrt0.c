@@ -19,6 +19,7 @@
 #include <string.h>
 #include <assert.h>
 #include <stdio.h>
+#include <stdatomic.h>
 //@endcond
 
 /***** Local headers ********************************************************/
@@ -44,7 +45,7 @@ static mrbc_tcb *task_queue_[NUM_TASK_QUEUE][NUM_CORES];
 #define q_suspended_ (task_queue_[3])
 static volatile uint32_t tick_;
 static volatile uint32_t wakeup_tick_[NUM_CORES] = {(1 << 16), (1 << 16)}; // no significant meaning.
-
+static mrbc_tcb * volatile task_buffer_to_core[NUM_CORES];
 
 /***** Global variables *****************************************************/
 /***** Signal catching functions ********************************************/
@@ -133,6 +134,22 @@ inline static void preempt_running_task(void)
   }
 }
 
+# if MRBC_SCHEDULER_EXIT
+static int is_all_core_empty(void)
+{
+  for ( uint procid = 0; procid < NUM_CORES; procid++ ) {
+    for ( uint8_t i = 1; i < NUM_TASK_QUEUE; i++ ) {
+      if ( task_queue_[i][procid] ) {
+        return 0;
+      }
+    }
+    if ( task_buffer_to_core[procid] ) {
+      return 0;
+    }
+  }
+  return 1;
+}
+# endif
 
 //================================================================
 /*! Tick timer interrupt handler.
@@ -185,6 +202,43 @@ void mrbc_task_switch(void)
   }
 }
 
+//================================================================
+/*! add tasks made executable by other core to ready queue
+
+*/
+void mrbc_task_switch_by_other_core(void)
+{
+  volatile uint procid = get_procid();
+  mrbc_tcb * volatile tcb;
+  mrbc_tcb * volatile *top;
+  interrupt_status_t save;
+  
+  save = vm_mutex_lock( coresending_mutex );
+  top = &task_buffer_to_core[procid];
+  while ( *top != NULL ) {
+    tcb = *top;
+    *top = (*top)->next;
+    q_insert_task(tcb);
+  }
+  
+  vm_mutex_unlock( coresending_mutex, save );
+
+  save = hal_disable_irq();
+  mrbc_tcb * volatile t;
+  tcb = q_waiting_[procid];
+  while ( tcb != NULL ) {
+    t = tcb;
+    tcb = tcb->next;
+    if ( t->reason == TASKREASON_CORERESPONSE ) {
+      q_delete_task(t);
+      t->state = TASKSTATE_READY;
+      t->reason = 0;
+      q_insert_task(t);
+    }
+  }
+  
+  hal_enable_irq(save);
+}
 
 //================================================================
 /*! create (allocate) TCB.
@@ -357,16 +411,38 @@ int mrbc_run(void)
 {
   int ret = 0;
   int8_t procid = get_procid();
-
-  (void)ret;	// avoid warning.
+  interrupt_status_t save;
 #if MRBC_SCHEDULER_EXIT
-  if( !q_ready_[procid] && !q_waiting_[procid] && !q_suspended_[procid] ) return ret;
+  uint8_t empty_core_counter = 0;
+  int flag_all_core_empty = 0;
 #endif
 
+  (void)ret;	// avoid warning.
+
   while( 1 ) {
+    mrbc_task_switch_by_other_core();
+
+    if (tick_ % 1000 == 0) {
+      mrbc_tcb *temp = q_ready_[procid];
+      printf("%d ", procid);
+      while ( temp != NULL ) {
+        printf("%p ", temp);
+        temp = temp->next;
+      }
+      printf("\n");
+    }
+
     mrbc_tcb *tcb = q_ready_[procid];
     if( tcb == NULL ) {		// no task to run.
       hal_idle_cpu();
+#if MRBC_SCHEDULER_EXIT
+      save = vm_mutex_lock( coresending_mutex );
+      flag_all_core_empty = is_all_core_empty();
+      vm_mutex_unlock( coresending_mutex, save );
+      if ( flag_all_core_empty ) {
+        return ret;
+      }
+#endif
       continue;
     }
 
@@ -400,7 +476,7 @@ int mrbc_run(void)
       did the task done?
     */
     if( ret_vm_run != 0 ) {
-      uint32_t save = hal_disable_irq();
+      save = hal_disable_irq();
       q_delete_task(tcb);
       tcb->state = TASKSTATE_DORMANT;
       q_insert_task(tcb);
@@ -427,7 +503,21 @@ int mrbc_run(void)
       }
 
 #if MRBC_SCHEDULER_EXIT
-      if( !q_ready_[procid] && !q_waiting_[procid] && !q_suspended_[procid] ) return ret;
+      save = vm_mutex_lock( coresending_mutex );
+      empty_core_counter = 0;
+      for ( uint scan_procid = 0; scan_procid < NUM_CORES; scan_procid++ ) {
+        if ( !task_buffer_to_core[scan_procid] && !q_ready_[scan_procid] 
+            && !q_waiting_[scan_procid] && !q_suspended_[scan_procid] ) {
+          empty_core_counter++;
+        }
+      }
+      
+      vm_mutex_unlock( coresending_mutex, save );
+
+      if ( empty_core_counter == NUM_CORES ) {
+        return ret;
+      }
+      
 #endif
       continue;
     }
@@ -438,7 +528,7 @@ int mrbc_run(void)
     if( tcb->state == TASKSTATE_RUNNING ) {
       tcb->state = TASKSTATE_READY;
 
-      uint32_t save = hal_disable_irq();
+      save = hal_disable_irq();
       q_delete_task(tcb);       // insert task on queue last.
       q_insert_task(tcb);
       hal_enable_irq(save);
@@ -877,6 +967,62 @@ void mrbc_cleanup(void)
   }
 }
 
+//================================================================
+/*! send a task to other core. 
+
+*/
+void mrbc_send_to_core(mrbc_tcb *tcb, volatile uint procid)
+{
+  if ( procid == get_procid() ) {
+    return;
+  }
+  assert( 0 <= procid && procid < NUM_CORES );
+  interrupt_status_t save;
+  save = vm_mutex_lock( coresending_mutex );
+  mrbc_tcb * volatile *top = &task_buffer_to_core[procid];
+  mrbc_tcb * volatile tcb_check = *top;
+  
+  if ( tcb->reason == TASKREASON_CORERESPONSE ) {
+    vm_mutex_unlock( coresending_mutex, save );
+    return;
+  }
+  
+  while ( tcb_check != NULL ) {
+    if ( tcb_check == tcb ) {
+      vm_mutex_unlock( coresending_mutex, save );
+      return;
+    }
+    tcb_check = tcb_check->next;
+  }
+
+  q_delete_task(tcb);
+
+  tcb->state = TASKSTATE_WAITING;
+
+  q_insert_task(tcb);
+  q_delete_task(tcb);
+
+  tcb->reason = TASKREASON_CORERESPONSE;
+  
+  tcb->vm.flag_preemption = 1;
+  
+  if ( *top == NULL ) {
+    // insert the top of the buffer 
+    // (There is no any task in the buffer)
+    tcb->next = *top;
+    *top = tcb;
+  } else {
+    // insert the end of the buffer
+    mrbc_tcb * volatile t = *top;
+    while ( t->next != NULL ) {
+      t = t->next;
+    }
+    tcb->next = NULL;
+    t->next = tcb;    
+  }
+  
+  vm_mutex_unlock( coresending_mutex, save );
+}
 
 //================================================================
 /*! (method) sleep for a specified number of seconds (CRuby compatible)
@@ -1498,6 +1644,28 @@ static void c_vm_tick(mrbc_vm *vm, mrbc_value v[], int argc)
 #include "_autogen_class_rrt0.h"
 
 
+//================================================================
+/*! (method) send the running task to specified core
+
+*/
+static void c_send_to_core(mrbc_vm *vm, mrbc_value v[], int argc)
+{
+  // putchar('0');
+  if( v[1].tt != MRBC_TT_INTEGER ) {
+    mrbc_raise( vm, MRBC_CLASS(ArgumentError), 0 );
+    return;
+  }
+  volatile uint procid = mrbc_integer( v[1] );
+  if( procid < 0 || procid >= NUM_CORES ) {
+    mrbc_raise( vm, MRBC_CLASS(ArgumentError), 0 );
+    return;
+  }
+
+  mrbc_send_to_core(VM2TCB(vm), procid);
+}
+
+
+
 
 //================================================================
 /*! initialize
@@ -1536,6 +1704,7 @@ void mrbc_init(void *heap_ptr, unsigned int size)
 
   mrbc_define_method(0, 0, "sleep", c_sleep);
   mrbc_define_method(0, 0, "sleep_ms", c_sleep_ms);
+  mrbc_define_method(0, 0, "to", c_send_to_core);
 }
 
 
