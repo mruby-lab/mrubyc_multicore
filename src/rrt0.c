@@ -93,8 +93,8 @@ static void q_insert_task(mrbc_tcb *p_tcb)
 //================================================================
 /*! Insert task(TCB) to buffer to send to core
 
-  @param  p_tcb	 Pointer to target TCB
-  @param  procid Id of core.
+  @param  p_tcb	 Pointer to target TCB.
+  @param  procid 
 
 */
 static void buffer_insert_task(mrbc_tcb *p_tcb, volatile int8_t procid)
@@ -165,6 +165,8 @@ inline static void preempt_running_task(void)
 # if MRBC_SCHEDULER_EXIT
 //================================================================
 /*! check all tasks in all cores completed.
+    @return  True if all cores are empty,
+             false otherwise (if a task exists somewhere in the queue).
 */
 static int is_all_core_empty(void)
 {
@@ -240,7 +242,7 @@ void mrbc_task_switch(void)
 void mrbc_task_switch_by_other_core(void)
 {
   volatile uint procid = get_procid();
-  mrbc_tcb *tcb;
+  mrbc_tcb *tcb, *t;
   mrbc_tcb **top;
   interrupt_status_t save;
   
@@ -257,7 +259,6 @@ void mrbc_task_switch_by_other_core(void)
   vm_mutex_unlock( coresending_mutex, save );
 
   save = hal_disable_irq();
-  mrbc_tcb * volatile t;
   tcb = q_waiting_[procid];
   while ( tcb != NULL ) {
     t = tcb;
@@ -988,8 +989,8 @@ void mrbc_cleanup(void)
 
 //================================================================
 /*! send a task to other core. 
-    @param  tcb    Pointer of TCB
-    @param  procid Id of core to send.
+    @param  tcb    Pointer of TCB.
+    @param  procid Destination core ID.
 */
 void mrbc_send_to_core(mrbc_tcb *tcb, volatile uint procid)
 {
