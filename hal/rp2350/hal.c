@@ -38,7 +38,9 @@ spin_lock_t * write_mutex;
 spin_lock_t * gc_mutex;
 spin_lock_t * globalkv_mutex;
 spin_lock_t * symbol_mutex;
+spin_lock_t * coresending_mutex; 
 spin_lock_t * task_mutex;
+
 
 volatile uint32_t doorbell_irq;
 
@@ -118,6 +120,7 @@ void hal_init(void)
   gc_mutex = vm_mutex_init(spin_lock_claim_unused(false)); 
   globalkv_mutex = vm_mutex_init(spin_lock_claim_unused(false));
   symbol_mutex = vm_mutex_init(spin_lock_claim_unused(false));
+  coresending_mutex = vm_mutex_init(spin_lock_claim_unused(false));
   task_mutex = vm_mutex_init(spin_lock_claim_unused(false));
 
   doorbell_counter = multicore_doorbell_claim_unused((1 << NUM_CORES) - 1, false);

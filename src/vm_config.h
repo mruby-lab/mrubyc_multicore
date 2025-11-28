@@ -13,6 +13,8 @@
 #ifndef MRBC_SRC_VM_CONFIG_H_
 #define MRBC_SRC_VM_CONFIG_H_
 
+// #define MRBC_SCHEDULER_EXIT 1
+
 // maximum number of VMs
 #if !defined(MAX_VM_COUNT)
 #define MAX_VM_COUNT 5
@@ -107,6 +109,7 @@
 #if !defined(NDEBUG)
 #define MRBC_DEBUG
 #endif
+
 
 // #define MRBC_NO_TIMER
 
