@@ -74,7 +74,7 @@ typedef struct RTcb {
 #if defined(MRBC_DEBUG)
   uint8_t obj_mark_[4];		//!< set "TCB\0" for debug.
 #endif
-  struct RTcb * volatile next;		//!< daisy chain in task queue.
+  struct RTcb *next;		//!< daisy chain in task queue.
   uint8_t priority;		//!< task priority. initial value.
   uint8_t priority_preemption;	//!< task priority. effective value.
   volatile uint8_t timeslice;	//!< time slice counter.
