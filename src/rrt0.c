@@ -266,7 +266,7 @@ void mrbc_task_switch_by_other_core(void)
   volatile uint procid = get_procid();
   mrbc_tcb *tcb, *t;
   mrbc_tcb **top;
-  interrupt_status_t save;
+  volatile interrupt_status_t save;
   
   top = &task_buffer_to_core[procid];
   __dmb();
