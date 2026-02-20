@@ -111,7 +111,7 @@
 #endif
 
 
-// #define MRBC_NO_TIMER
+#define MRBC_NO_TIMER
 
 // Console new-line mode.
 // If you need to convert LF to CRLF in console output, enable the following:

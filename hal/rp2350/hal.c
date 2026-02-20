@@ -195,6 +195,15 @@ void hal_init(void)
   gc_mutex = vm_mutex_init(spin_lock_claim_unused(false)); 
   globalkv_mutex = vm_mutex_init(spin_lock_claim_unused(false));
   symbol_mutex = vm_mutex_init(spin_lock_claim_unused(false));
+  coresending_mutex = vm_mutex_init(spin_lock_claim_unused(false));
+  task_mutex = vm_mutex_init(spin_lock_claim_unused(false));
+  
+  multicore_lockout_victim_init();
+}
+
+void hal_init_core1(void)
+{
+  multicore_lockout_victim_init();
 }
 
 #endif /* ifndef MRBC_NO_TIMER */

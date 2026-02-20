@@ -511,7 +511,7 @@ int mrbc_run(void)
     tcb->vm.flag_preemption = 0;
 #else
     // Emulate time slice preemption.
-    int ret_vm_run;
+    int ret_vm_run = 0;
     tcb->vm.flag_preemption = 1;
     while( tcb->timeslice != 0 ) {
       ret_vm_run = mrbc_vm_run( &tcb->vm );
@@ -1719,7 +1719,6 @@ static void c_vm_tick(mrbc_vm *vm, mrbc_value v[], int argc)
 */
 static void c_send_to_core(mrbc_vm *vm, mrbc_value v[], int argc)
 {
-  // putchar('0');
   if( v[1].tt != MRBC_TT_INTEGER ) {
     mrbc_raise( vm, MRBC_CLASS(ArgumentError), 0 );
     return;
