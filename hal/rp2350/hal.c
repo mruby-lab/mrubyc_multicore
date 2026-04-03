@@ -57,7 +57,7 @@ volatile uint32_t doorbell_irq;
 */
 bool alarm_irq(struct repeating_timer *t)
 {
-  if (is_core0_busy) {
+  if ( is_core0_busy ) {
     mrbc_tick_increment();
     multicore_doorbell_set_other_core(doorbell_counter);
     mrbc_task_switch();
@@ -73,7 +73,7 @@ bool alarm_irq(struct repeating_timer *t)
 */
 static inline void alarm_irq_at_sleep(void)
 {
-  if (is_core0_busy == false) {
+  if ( !is_core0_busy ) {
     mrbc_tick_increment();
     multicore_doorbell_set_other_core(doorbell_counter);
     mrbc_task_switch();
@@ -88,10 +88,10 @@ static inline void alarm_irq_at_sleep(void)
 */
 void alarm_irq_core1(void)
 {
-  interrupt_status_t save = hal_disable_irq();
+  hal_disable_irq();
   multicore_doorbell_clear_current_core(doorbell_counter);
   mrbc_task_switch();
-  hal_enable_irq(save);
+  hal_enable_irq();
 }
 
 //================================================================
@@ -113,7 +113,6 @@ void hal_init(void)
                         | CLOCKS_SLEEP_EN1_CLK_USB_BITS 
                         | CLOCKS_SLEEP_EN1_CLK_SYS_UART0_BITS 
                         | CLOCKS_SLEEP_EN1_CLK_PERI_UART0_BITS;
-
   
   alloc_mutex = vm_mutex_init(spin_lock_claim_unused(false));
   write_mutex = vm_mutex_init(spin_lock_claim_unused(false));
