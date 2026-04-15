@@ -1,7 +1,7 @@
 /*! @file
   @brief
   Hardware abstraction layer
-        for RP2040
+        for RP2350
 
   <pre>
   Copyright (C) 2015- Kyushu Institute of Technology.
@@ -49,14 +49,14 @@
 #ifndef MRBC_NO_TIMER
 void hal_init(void);
 void hal_init_core1(void);
-# define hal_enable_irq(save)  (restore_interrupts(save))
-# define hal_disable_irq() (save_and_disable_interrupts())
+# define hal_enable_irq() __asm volatile("cpsie i")
+# define hal_disable_irq() __asm volatile("cpsid i")
 # define hal_idle_cpu()    goto_sleep_for_1ms()
 #else // MRBC_NO_TIMER
 void hal_init(void);
-# define hal_init_core1() ((void)0)
-# define hal_enable_irq(save)  ((void)0)
-# define hal_disable_irq() (0)
+void hal_init_core1(void);
+# define hal_enable_irq()  ((void)0)
+# define hal_disable_irq() ((void)0)
 # define hal_idle_cpu()    (sleep_ms(1), (get_procid() == 0) ? mrbc_tick_increment() : ((void) 0), mrbc_task_switch())
 
 #endif
