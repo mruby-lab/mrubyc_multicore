@@ -133,4 +133,7 @@
 // #define MRBC_OUT_OF_MEMORY() mrbc_alloc_print_memory_pool(); hal_abort(0)
 // #define MRBC_ABORT_BY_EXCEPTION(vm) mrbc_p( &vm->exception ); hal_abort(0)
 
+// Multi-core mode
+#define MRBC_MULTICORE
+
 #endif // MRBC_SRC_VM_CONFIG_H_

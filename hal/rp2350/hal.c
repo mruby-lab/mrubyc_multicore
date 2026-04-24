@@ -16,7 +16,6 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
-#include "hardware/gpio.h"
 
 /***** Local headers ********************************************************/
 #include "hal.h"
@@ -59,7 +58,11 @@ bool alarm_irq(struct repeating_timer *t)
 {
   if ( is_core0_busy ) {
     mrbc_tick_increment();
+
+#ifdef MRBC_MULTICORE
     multicore_doorbell_set_other_core(doorbell_counter);
+#endif // MRBC_MULTICORE
+
     mrbc_task_switch();
   }
 
@@ -75,12 +78,17 @@ static inline void alarm_irq_at_sleep(void)
 {
   if ( !is_core0_busy ) {
     mrbc_tick_increment();
+
+#ifdef MRBC_MULTICORE
     multicore_doorbell_set_other_core(doorbell_counter);
+#endif // MRBC_MULTICORE
+
     mrbc_task_switch();
   }
   is_core0_busy = true; 
 }
 
+#ifdef MRBC_MULTICORE
 //================================================================
 /*!@brief
   timer alarm irq (for both busy and sleep, at core1)
@@ -93,6 +101,8 @@ void alarm_irq_core1(void)
   mrbc_task_switch();
   hal_enable_irq();
 }
+
+#endif // MRBC_MULTICORE
 
 //================================================================
 /*!@brief
@@ -114,6 +124,7 @@ void hal_init(void)
                         | CLOCKS_SLEEP_EN1_CLK_SYS_UART0_BITS 
                         | CLOCKS_SLEEP_EN1_CLK_PERI_UART0_BITS;
   
+  #ifdef MRBC_MULTICORE
   alloc_mutex = vm_mutex_init(spin_lock_claim_unused(false));
   write_mutex = vm_mutex_init(spin_lock_claim_unused(false));
   gc_mutex = vm_mutex_init(spin_lock_claim_unused(false)); 
@@ -122,7 +133,7 @@ void hal_init(void)
   coresending_mutex = vm_mutex_init(spin_lock_claim_unused(false));
   task_mutex = vm_mutex_init(spin_lock_claim_unused(false));
 
-  doorbell_counter = multicore_doorbell_claim_unused((1 << NUM_CORES) - 1, false);
+  doorbell_counter = multicore_doorbell_claim_unused((1 << CORES_QUANTITY) - 1, false);
   if (doorbell_counter == -1) {
     char msg[] = "doorbell claim is failed!";
     hal_write(1, msg, sizeof(msg));
@@ -130,8 +141,10 @@ void hal_init(void)
   }
 
   multicore_lockout_victim_init();
+  #endif // MRBC_MULTICORE
 }
 
+  #ifdef MRBC_MULTICORE
 //================================================================
 /*!@brief
   initialize for core1
@@ -144,6 +157,7 @@ void hal_init_core1(void)
   irq_set_enabled(doorbell_irq, true);
   multicore_lockout_victim_init();
 }
+  #endif // MRBC_MULTICORE
 
 //================================================================
 /*!@brief
@@ -163,6 +177,7 @@ int hal_flush(int fd)
 void goto_sleep_for_1ms()
 {
   struct timespec ts;
+  #ifdef MRBC_MULTICORE
   if (get_procid() == 0) {
     is_core0_busy = false;
     aon_timer_get_time(&ts);
@@ -184,9 +199,28 @@ void goto_sleep_for_1ms()
   } else {
     __wfi();
   }
+  #else
+  is_core0_busy = false;
+  aon_timer_get_time(&ts);
+
+  ts.tv_nsec += 1e6;
+  if (ts.tv_nsec >= 1e9)
+  {
+    ts.tv_sec += 1;
+    ts.tv_nsec -= 1e9;
+  }
+
+  aon_timer_enable_alarm(&ts, alarm_irq_at_sleep, true);
+  
+  __wfi();
+  // To ensure that the AON timer wakes up the sleep state
+  while(!is_core0_busy) {
+    tight_loop_contents();
+  }
+  #endif // MRBC_MULTICORE
 }
 
-#else
+#elifdef MRBC_MULTICORE
 void hal_init(void)
 {
   alloc_mutex = vm_mutex_init(spin_lock_claim_unused(false));
@@ -203,6 +237,13 @@ void hal_init(void)
 void hal_init_core1(void)
 {
   multicore_lockout_victim_init();
+}
+
+#else 
+
+void hal_init(void)
+{
+ 
 }
 
 #endif /* ifndef MRBC_NO_TIMER */
