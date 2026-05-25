@@ -201,24 +201,50 @@ inline static void preempt_running_task(void)
   }
 }
 
-#if MRBC_SCHEDULER_EXIT && defined(MRBC_MULTICORE) 
 //================================================================
 /*! check all tasks in all cores completed.
     @return  True if all cores are empty,
              false otherwise (if a task exists somewhere in the queue).
 */
+#if MRBC_SCHEDULER_EXIT && defined(MRBC_MULTICORE) 
 inline static int is_all_core_empty(void)
 {
-  __dmb();
+  g_lock();
+  interrupt_status_t save = vm_mutex_lock( coresending_mutex );
+      
+  memory_barrier();
   for ( volatile uint procid = 0; procid < CORES_QUANTITY; procid++ ) {
     if ( q_ready_[procid] || q_waiting_[procid] || q_suspended_[procid] 
         || task_buffer_to_core[procid] ) {
+      vm_mutex_unlock( coresending_mutex, save );
+      g_unlock();
+      
       return 0;
     }
   }
+  vm_mutex_unlock( coresending_mutex, save );
+  g_unlock();
+      
   return 1;
 }
-#endif // MRBC_SCHEDULER_EXIT && defined(MRBC_MULTICORE)
+
+#elif MRBC_SCHEDULER_EXIT  // #if MRBC_SCHEDULER_EXIT && defined(MRBC_MULTICORE)
+inline static int is_all_core_empty(void)
+{
+  hal_disable_irq();
+  int flag_exit = !q_ready_[procid] && !q_waiting_[procid] && !q_suspended_[procid];
+  hal_enable_irq();
+      
+  return flag_exit();
+}
+
+#else
+inline static int is_all_core_empty(void)
+{    
+  return 0;
+}
+
+#endif // #elif MRBC_SCHEDULER_EXIT
 
 #ifdef MRBC_MULTICORE
 //================================================================
@@ -300,7 +326,7 @@ void mrbc_task_switch_by_other_core(void)
   volatile interrupt_status_t save;
   
   top = &task_buffer_to_core[procid];
-  __dmb();
+  memory_barrier();
   save = vm_mutex_lock( coresending_mutex );
   
   while ( *top != NULL ) {
@@ -504,12 +530,6 @@ int mrbc_run(void)
   volatile uint procid = get_procid();
 
   (void)ret;	// avoid warning.
-#if MRBC_SCHEDULER_EXIT && defined(MRBC_MULTICORE)
-  interrupt_status_t save;
-  int flag_all_core_empty = 0;
-#endif
-
-  (void)ret;	// avoid warning.
 
   while( 1 ) {
 #ifdef MRBC_MULTICORE
@@ -518,21 +538,9 @@ int mrbc_run(void)
 
     mrbc_tcb *tcb = q_ready_[procid];
     if( tcb == NULL ) {		// no task to run.
-#if MRBC_SCHEDULER_EXIT && defined(MRBC_MULTICORE)
-      g_lock();
-      save = vm_mutex_lock( coresending_mutex );
-      flag_all_core_empty = is_all_core_empty();
-      vm_mutex_unlock( coresending_mutex, save );
-      g_unlock();
-      if ( flag_all_core_empty ) {
+      if ( is_all_core_empty() ) {
         return ret;
       }
-#elif MRBC_SCHEDULER_EXIT
-      hal_disable_irq();
-      int flag_exit = !q_ready_[procid] && !q_waiting_[procid] && !q_suspended_[procid];
-      hal_enable_irq();
-      if( flag_exit ) return ret;
-#endif
       hal_idle_cpu();
       continue;
     }
@@ -1160,7 +1168,7 @@ void mrbc_send_to_core(mrbc_tcb *tcb, volatile uint procid)
   assert( 0 <= procid && procid < CORES_QUANTITY );
   interrupt_status_t save;
   
-  __dmb();
+  memory_barrier();
   save = vm_mutex_lock( coresending_mutex );
 
   q_delete_task(tcb);
