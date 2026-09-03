@@ -13,7 +13,7 @@
 #ifndef MRBC_SRC_VM_CONFIG_H_
 #define MRBC_SRC_VM_CONFIG_H_
 
-// #define MRBC_SCHEDULER_EXIT 1
+#define MRBC_SCHEDULER_EXIT 1
 
 // maximum number of VMs
 #if !defined(MAX_VM_COUNT)
@@ -111,7 +111,7 @@
 #endif
 
 
-// #define MRBC_NO_TIMER
+#define MRBC_NO_TIMER
 
 // Console new-line mode.
 // If you need to convert LF to CRLF in console output, enable the following:

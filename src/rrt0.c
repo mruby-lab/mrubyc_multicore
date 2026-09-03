@@ -53,6 +53,7 @@ static mrbc_tcb *task_buffer_to_core[CORES_QUANTITY];
 volatile static uint32_t gen_counter[NUM_TASK_QUEUE][CORES_QUANTITY] = {{0, 0}, {0, 0}, {0, 0}, {0, 0}};
 atomic_flag task_mutex_lock = ATOMIC_FLAG_INIT;
 volatile atomic_flag flag_in_mutex_unlock = ATOMIC_FLAG_INIT;
+volatile int flag_allcore_taskswitch_enabled = 1;
 
 #else //MRBC_MULTICORE
 
@@ -224,7 +225,7 @@ inline static int is_all_core_empty(void)
   }
   vm_mutex_unlock( coresending_mutex, save );
   g_unlock();
-      
+  
   return 1;
 }
 
@@ -565,6 +566,7 @@ int mrbc_run(void)
       if( ret_vm_run != 0 ) break;
       if( tcb->state != TASKSTATE_RUNNING ) break;
     }
+    while ( !flag_allcore_taskswitch_enabled );
     if (procid == 0) {
       mrbc_tick_increment();
     }

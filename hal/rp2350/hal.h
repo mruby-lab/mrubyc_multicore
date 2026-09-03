@@ -54,12 +54,27 @@
 #define MRBC_TIMESLICE_TICK_COUNT 10
 #endif
 
+#if !defined(MRBC_NO_TIMER) && defined(MRBC_MULTICORE)
+#define g_lock()          (multicore_lockout_start_blocking())
+#define g_unlock()        (multicore_lockout_end_blocking())
+
+#elif defined(MRBC_MULTICORE)
+#define g_lock()          (flag_allcore_taskswitch_enabled = 0)
+#define g_unlock()        (flag_allcore_taskswitch_enabled = 1)
+
+#else 
+#define g_lock()          ((void)0)
+#define g_unlock()        ((void)0)
+
+#endif
+
 #ifndef MRBC_NO_TIMER
 void hal_init(void);
 void hal_init_core1(void);
-#define hal_enable_irq() __asm volatile("cpsie i")
+#define hal_enable_irq()  __asm volatile("cpsie i")
 #define hal_disable_irq() __asm volatile("cpsid i")
 #define hal_idle_cpu()    goto_sleep_for_1ms()
+
 #else // MRBC_NO_TIMER
 void hal_init(void);
 void hal_init_core1(void);
@@ -76,8 +91,6 @@ void hal_init_core1(void);
 #define vm_mutex_lock(mutex)            (spin_lock_blocking(mutex))
 #define vm_mutex_unlock(mutex, save)    (spin_unlock(mutex, save))
 #define get_procid()                    (get_core_num())
-#define g_lock()                        (multicore_lockout_start_blocking())
-#define g_unlock()                      (multicore_lockout_end_blocking())
 #define notify_other_core(doorbell_num) (multicore_doorbell_set_other_core(doorbell_num))
 #define notifier_init()                 (multicore_doorbell_claim_unused((1 << CORES_QUANTITY) - 1, false))
 #define memory_barrier()                __dmb()
@@ -88,7 +101,7 @@ void hal_init_core1(void);
 #define vm_mutex_lock(mutex)            (0)
 #define vm_mutex_unlock(mutex, save)    ((void)(save))
 #define get_procid()                    (0)
-#define g_lock()                        ()
+#define g_lock()                        ((void)0)
 #define g_unlock()                      ((void)0)
 #define notify_other_core(doorbell_num) ((void)0)
 #define notifier_init()                 (0)
