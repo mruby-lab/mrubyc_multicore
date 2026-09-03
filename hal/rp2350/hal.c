@@ -16,7 +16,6 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
-#include "hardware/gpio.h"
 
 /***** Local headers ********************************************************/
 #include "hal.h"
@@ -46,8 +45,67 @@ volatile uint32_t doorbell_irq;
 
 /***** Signal catching functions ********************************************/
 /***** Local functions ******************************************************/
+#ifdef MRBC_MULTICORE
+
+void multicore_init_core0(void)
+{
+  alloc_mutex = vm_mutex_init(spin_lock_claim_unused(false));
+  write_mutex = vm_mutex_init(spin_lock_claim_unused(false));
+  gc_mutex = vm_mutex_init(spin_lock_claim_unused(false)); 
+  globalkv_mutex = vm_mutex_init(spin_lock_claim_unused(false));
+  symbol_mutex = vm_mutex_init(spin_lock_claim_unused(false));
+  coresending_mutex = vm_mutex_init(spin_lock_claim_unused(false));
+  task_mutex = vm_mutex_init(spin_lock_claim_unused(false));
+
+  multicore_lockout_victim_init();
+}
+
+#else // #ifdef MRBC_MULTICORE
+
+void multicore_init_core0(void)
+{
+  
+}
+
+
+#endif // #ifdef MRBC_MULTICORE
 
 /***** Global functions *****************************************************/
+#if !defined(MRBC_NO_TIMER) && defined(MRBC_MULTICORE)
+//================================================================
+/*!@brief
+  timer alarm irq (for both busy and sleep, at core1)
+
+*/
+void alarm_irq_core1(void)
+{
+  hal_disable_irq();
+  multicore_doorbell_clear_current_core(doorbell_counter);
+  mrbc_task_switch();
+  hal_enable_irq();
+}
+
+//================================================================
+/*!@brief
+  initialize for core1
+
+*/
+void hal_init_core1(void)
+{
+  doorbell_irq = multicore_doorbell_irq_num(doorbell_counter);
+  irq_set_exclusive_handler(doorbell_irq, alarm_irq_core1);
+  irq_set_enabled(doorbell_irq, true);
+  multicore_lockout_victim_init();
+}
+
+#elifdef MRBC_MULTICORE //#if !defined(MRBC_NO_TIMER) && defined(MRBC_MULTICORE)
+void hal_init_core1(void)
+{
+  multicore_lockout_victim_init();
+}
+
+#endif //#elifdef MRBC_MULTICORE 
+
 #ifndef MRBC_NO_TIMER
 
 //================================================================
@@ -59,7 +117,9 @@ bool alarm_irq(struct repeating_timer *t)
 {
   if ( is_core0_busy ) {
     mrbc_tick_increment();
-    multicore_doorbell_set_other_core(doorbell_counter);
+
+    notify_other_core(doorbell_counter);
+
     mrbc_task_switch();
   }
 
@@ -75,23 +135,12 @@ static inline void alarm_irq_at_sleep(void)
 {
   if ( !is_core0_busy ) {
     mrbc_tick_increment();
-    multicore_doorbell_set_other_core(doorbell_counter);
+
+    notify_other_core(doorbell_counter);
+
     mrbc_task_switch();
   }
   is_core0_busy = true; 
-}
-
-//================================================================
-/*!@brief
-  timer alarm irq (for both busy and sleep, at core1)
-
-*/
-void alarm_irq_core1(void)
-{
-  hal_disable_irq();
-  multicore_doorbell_clear_current_core(doorbell_counter);
-  mrbc_task_switch();
-  hal_enable_irq();
 }
 
 //================================================================
@@ -113,36 +162,15 @@ void hal_init(void)
                         | CLOCKS_SLEEP_EN1_CLK_USB_BITS 
                         | CLOCKS_SLEEP_EN1_CLK_SYS_UART0_BITS 
                         | CLOCKS_SLEEP_EN1_CLK_PERI_UART0_BITS;
-  
-  alloc_mutex = vm_mutex_init(spin_lock_claim_unused(false));
-  write_mutex = vm_mutex_init(spin_lock_claim_unused(false));
-  gc_mutex = vm_mutex_init(spin_lock_claim_unused(false)); 
-  globalkv_mutex = vm_mutex_init(spin_lock_claim_unused(false));
-  symbol_mutex = vm_mutex_init(spin_lock_claim_unused(false));
-  coresending_mutex = vm_mutex_init(spin_lock_claim_unused(false));
-  task_mutex = vm_mutex_init(spin_lock_claim_unused(false));
 
-  doorbell_counter = multicore_doorbell_claim_unused((1 << NUM_CORES) - 1, false);
+  doorbell_counter = notifier_init();
   if (doorbell_counter == -1) {
     char msg[] = "doorbell claim is failed!";
     hal_write(1, msg, sizeof(msg));
     exit(1);
   }
 
-  multicore_lockout_victim_init();
-}
-
-//================================================================
-/*!@brief
-  initialize for core1
-
-*/
-void hal_init_core1(void)
-{
-  doorbell_irq = multicore_doorbell_irq_num(doorbell_counter);
-  irq_set_exclusive_handler(doorbell_irq, alarm_irq_core1);
-  irq_set_enabled(doorbell_irq, true);
-  multicore_lockout_victim_init();
+  multicore_init_core0();
 }
 
 //================================================================
@@ -156,6 +184,15 @@ int hal_flush(int fd)
   return 0;
 }
 
+#else // #ifndef MRBC_NO_TIMER
+void hal_init(void)
+{
+  multicore_init_core0();
+}
+
+#endif // #ifndef MRBC_NO_TIMER
+
+#if !defined(MRBC_NO_TIMER) && defined(MRBC_MULTICORE)
 //================================================================
 /*!@brief
   Go to sleep mode with alarm after 1ms.
@@ -185,27 +222,33 @@ void goto_sleep_for_1ms()
     __wfi();
   }
 }
-
-#else
-void hal_init(void)
+#elifndef MRBC_NO_TIMER
+//================================================================
+/*!@brief
+  Go to sleep mode with alarm after 1ms.
+*/
+void goto_sleep_for_1ms()
 {
-  alloc_mutex = vm_mutex_init(spin_lock_claim_unused(false));
-  write_mutex = vm_mutex_init(spin_lock_claim_unused(false));
-  gc_mutex = vm_mutex_init(spin_lock_claim_unused(false)); 
-  globalkv_mutex = vm_mutex_init(spin_lock_claim_unused(false));
-  symbol_mutex = vm_mutex_init(spin_lock_claim_unused(false));
-  coresending_mutex = vm_mutex_init(spin_lock_claim_unused(false));
-  task_mutex = vm_mutex_init(spin_lock_claim_unused(false));
+  struct timespec ts;
+  is_core0_busy = false;
+  aon_timer_get_time(&ts);
+
+  ts.tv_nsec += 1e6;
+  if (ts.tv_nsec >= 1e9)
+  {
+    ts.tv_sec += 1;
+    ts.tv_nsec -= 1e9;
+  }
+
+  aon_timer_enable_alarm(&ts, alarm_irq_at_sleep, true);
   
-  multicore_lockout_victim_init();
+  __wfi();
+  // To ensure that the AON timer wakes up the sleep state
+  while(!is_core0_busy) {
+    tight_loop_contents();
+  }
 }
-
-void hal_init_core1(void)
-{
-  multicore_lockout_victim_init();
-}
-
-#endif /* ifndef MRBC_NO_TIMER */
+#endif
 
 //================================================================
 /*!@brief
