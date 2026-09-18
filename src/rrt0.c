@@ -233,10 +233,10 @@ inline static int is_all_core_empty(void)
 inline static int is_all_core_empty(void)
 {
   hal_disable_irq();
-  int flag_exit = !q_ready_[procid] && !q_waiting_[procid] && !q_suspended_[procid];
+  int flag_exit = !q_ready_[0] && !q_waiting_[0] && !q_suspended_[0];
   hal_enable_irq();
       
-  return flag_exit();
+  return flag_exit;
 }
 
 #else
